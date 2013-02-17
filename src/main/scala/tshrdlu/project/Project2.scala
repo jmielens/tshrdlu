@@ -31,12 +31,17 @@ trait EnglishStatusListener extends StatusOnlyListener {
   /**
    * Test whether a given text is written in English.
    */
-  val TheRE = """(?i)\bthe\b""".r // Throw me away!
   def isEnglish(text: String) = {
-    // Remove this and do better.
-    !TheRE.findFirstIn(text).isEmpty
-  }
+    val eng = new English()
+    val toks = text.split("\\s+")
+    val cleanToks = toks.filterNot(word => word.contains("http") || word.contains("@") || word.contains("#")).toList
+    val numTweet = cleanToks.length
 
+    val inVocab = cleanToks.filter(tok => eng.vocabulary.toList.contains(tok))
+    val numInVocab = inVocab.length
+
+    (numInVocab.toDouble/numTweet) > 0.3
+  }
 }
 
 /**
@@ -70,14 +75,16 @@ object PolarityStatusStreamer extends BaseStreamer with PolarityStatusListener
  * statistics at default interval (every 100 tweets). Filtered by provided
  * query terms.
  */
-object PolarityTermStreamer 
+object PolarityTermStreamer extends FilteredStreamer with TermFilter with PolarityStatusListener
 
 /**
  * Output polarity labels for every English tweet and output polarity
  * statistics at an interval of every ten tweets. Filtered by provided
  * query locations.
  */
-object PolarityLocationStreamer 
+object PolarityLocationStreamer extends FilteredStreamer with LocationFilter with PolarityStatusListener {
+  override val outputInterval = 10
+}
 
 
 /**
@@ -126,9 +133,22 @@ trait PolarityStatusListener extends EnglishStatusListener {
    *   1 for negative
    *   2 for neutral
    */
-  val random = new scala.util.Random
   def getPolarity(text: String) = {
-    random.nextInt(3)
+    val eng = new English()
+    val toks = text.split("\\s+")
+    val cleanToks = toks.filterNot(word => word.contains("http") || word.contains("@") || word.contains("#")).toList
+
+    val numPos = cleanToks.filter(tok => eng.positive.toList.contains(tok)).length
+    val numNeg = cleanToks.filter(tok => eng.negative.toList.contains(tok)).length
+
+    val buffer = 0
+    if (numPos > numNeg + buffer) {
+      0
+    } else if (numNeg > numPos + buffer) {
+      1
+    } else {
+      2
+    }
   }
 
 }
