@@ -19,6 +19,36 @@ package tshrdlu.twitter
 import twitter4j._
 import collection.JavaConversions._
 
+
+
+
+object ClassFollowers extends TwitterInstance {
+
+  def main(args: Array[String]) {
+    var cursor = -1
+    val screenName = args(0)
+
+    while (cursor != 0) {
+      val followerNames = twitter.getFollowersIDs(screenName,cursor)
+      val followerIDs = followerNames.getIDs()
+      // val screenNames = followerNames.map(x=>x.getScreenName)
+      // val classNames = followerNames.filter(x=>x.takeRight(5)=="_anlp")
+      val userNames = followerIDs.map(x=>twitter.showUser(x).getScreenName()).filter(x=>x.endsWith("_anlp"))
+      userNames.filterNot(x=>x=="evans_anlp").foreach(twitter.createFriendship)
+    cursor = followerNames.getNextCursor().toInt
+    }
+
+
+  }
+
+}
+
+
+
+
+
+
+
 /**
  * Base trait with properties default for Configuration.
  * Gets a Twitter instance set up and ready to use.
