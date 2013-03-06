@@ -90,11 +90,13 @@ extends StatusListenerAdaptor with UserStreamListenerAdaptor {
   import chalk.util.SimpleTokenizer
   import collection.JavaConversions._
 
+  println("Starting MadLibBot.")
+
   val username = twitter.getScreenName
 
   // Build Thesaurus
   println("Building Thesaurus...")
-  val thesLines = io.Source.fromFile("en_thes").getLines.toList
+  val thesLines = io.Source.fromFile("src/main/resources/dict/en_thes").getLines.toVector
   val thesWords = thesLines.zipWithIndex.filter(!_._1.contains("("))
   val thesList  = thesWords.unzip._1.map(x => x.split("\\|").head)
   val tmpMap = thesWords.map{ w =>
@@ -108,8 +110,8 @@ extends StatusListenerAdaptor with UserStreamListenerAdaptor {
     }
   }
 
-  println("Zipping Thesaurus...")
   val synonymMap = thesList.zip(tmpMap).toMap.mapValues{ v => v.flatMap{ x=> x.split("\\|").filterNot(_.contains("("))}}.withDefault(x=>Vector(x.toString))
+  println("Built Thesaurus with "+synonymMap.size+" words.")
   println("Ready.")
 
   override def onStatus(status: Status) {
