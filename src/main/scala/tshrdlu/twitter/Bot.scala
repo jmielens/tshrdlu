@@ -20,8 +20,6 @@ import twitter4j._
 import collection.JavaConversions._
 
 
-
-
 object ClassFollowers extends TwitterInstance {
 
   def main(args: Array[String]) {
@@ -31,11 +29,10 @@ object ClassFollowers extends TwitterInstance {
     while (cursor != 0) {
       val followerNames = twitter.getFollowersIDs(screenName,cursor)
       val followerIDs = followerNames.getIDs()
-      // val screenNames = followerNames.map(x=>x.getScreenName)
-      // val classNames = followerNames.filter(x=>x.takeRight(5)=="_anlp")
       val userNames = followerIDs.map(x=>twitter.showUser(x).getScreenName()).filter(x=>x.endsWith("_anlp"))
-      userNames.filterNot(x=>x=="evans_anlp").foreach(twitter.createFriendship)
-    cursor = followerNames.getNextCursor().toInt
+
+      userNames.filterNot(x=>x==twitter.getScreenName).foreach(twitter.createFriendship)
+      cursor = followerNames.getNextCursor().toInt
     }
 
 
@@ -43,18 +40,27 @@ object ClassFollowers extends TwitterInstance {
 
 }
 
-
-
-
-
-
-
 /**
  * Base trait with properties default for Configuration.
  * Gets a Twitter instance set up and ready to use.
  */
 trait TwitterInstance {
   val twitter = new TwitterFactory().getInstance
+}
+
+
+/**
+  *
+  */
+class MadLibBot extends TwitterInstance with StreamInstance {
+  stream.addListener(new MadLibGen(twitter))
+}
+
+object MadLibBot {
+    def main(args: Array[String]) {
+      val bot = new MadLibBot
+      bot.stream.user
+    }
 }
 
 /**
@@ -77,9 +83,67 @@ object ReactiveBot {
     // tweets to test out, use this instead of bot.stream.user.
     //bot.stream.sample
   }
-
 }
 
+class MadLibGen(twitter: Twitter) 
+extends StatusListenerAdaptor with UserStreamListenerAdaptor {
+  import chalk.util.SimpleTokenizer
+  import collection.JavaConversions._
+
+  val username = twitter.getScreenName
+
+  // Build Thesaurus
+  println("Building Thesaurus...")
+  val thesLines = io.Source.fromFile("en_thes").getLines.toList
+  val thesWords = thesLines.zipWithIndex.filter(!_._1.contains("("))
+  val thesList  = thesWords.unzip._1.map(x => x.split("\\|").head)
+  val tmpMap = thesWords.map{ w =>
+    val lineNum = w._2
+    val senses = w._1.split("\\|").tail.head.toInt
+
+    val range = (lineNum + 1) to (lineNum + senses)
+
+    range.map{
+      thesLines(_)
+    }
+  }
+
+  println("Zipping Thesaurus...")
+  val synonymMap = thesList.zip(tmpMap).toMap.mapValues{ v => v.flatMap{ x=> x.split("\\|").filterNot(_.contains("("))}}.withDefault(x=>Vector(x.toString))
+  println("Ready.")
+
+  override def onStatus(status: Status) {
+    val text = status.getText.toLowerCase
+
+    val tokText = SimpleTokenizer(text)
+
+    println("New status: " + text)
+    val replyName = status.getInReplyToScreenName
+    if (replyName == username) {
+      println("*************")
+
+      val replyText = tokText.map{word =>
+        if (word.length < 3) word
+        else getSynonym(word)
+      }.mkString(" ")
+      
+      println("New reply: " + status.getText)
+      val text = "@" + status.getUser.getScreenName + " " + replyText
+      println("Replying: " + text)
+      val reply = new StatusUpdate(text).inReplyToStatusId(status.getId)
+      twitter.updateStatus(reply)
+    }    
+
+  }
+
+  def getSynonym(word: String):String = {
+    val cands = synonymMap(word)
+    val rnd = new scala.util.Random(System.currentTimeMillis())
+    val r = rnd.nextInt(cands.length)
+    cands(r) 
+  }
+
+}
 
 /**
  * A listener that looks for messages to the user and replies using the
