@@ -54,8 +54,8 @@ trait TwitterInstance {
   * A bot that responds to be mentioned in the stream by MadLibbing
   * the tweet and replying.
   */
-class MadLibBot extends TwitterInstance with StreamInstance {
-  stream.addListener(new MadLibGen(twitter))
+class MadLibBot (listen: Boolean) extends TwitterInstance with StreamInstance {
+  stream.addListener(new MadLibGen(twitter,listen))
 }
 
 /**
@@ -63,7 +63,11 @@ class MadLibBot extends TwitterInstance with StreamInstance {
  */
 object MadLibBot {
     def main(args: Array[String]) {
-      val bot = new MadLibBot
+      var listen = false
+      if (args.size > 0) {
+        listen = args(0).toBoolean
+      }
+      val bot = new MadLibBot(listen)
       bot.stream.user
     }
 }
@@ -90,7 +94,7 @@ object ReactiveBot {
   }
 }
 
-class MadLibGen(twitter: Twitter) 
+class MadLibGen(twitter: Twitter, listen: Boolean) 
 extends StatusListenerAdaptor with UserStreamListenerAdaptor {
   import chalk.util.SimpleTokenizer
   import collection.JavaConversions._
@@ -119,9 +123,11 @@ extends StatusListenerAdaptor with UserStreamListenerAdaptor {
   val synonymMap = thesList.zip(tmpMap).toMap.mapValues{ v => v.flatMap{ x=> x.split("\\|").filterNot(_.contains("("))}}.withDefault(x=>Vector(x.toString))
   
   println("Built Thesaurus with "+synonymMap.size+" words.")
-  println("Spawning periodic searcher...")
-
-  regularExecute(vaccineLinkSearch,300)
+  
+  if (listen) {
+    println("Spawning periodic searcher...")
+    regularExecute(vaccineLinkSearch,300)
+  }
 
   println("Ready.")
 
