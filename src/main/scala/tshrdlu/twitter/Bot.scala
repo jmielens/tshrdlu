@@ -18,8 +18,13 @@ package tshrdlu.twitter
 
 import twitter4j._
 import collection.JavaConversions._
+import scala.concurrent.ops._
+import sys.process._
 
-
+/**
+ * Stand-alone Object used to follow all the followers of a given twitter
+ * user, provided the follower's name ends in '_anlp'
+ */
 object ClassFollowers extends TwitterInstance {
 
   def main(args: Array[String]) {
@@ -34,10 +39,7 @@ object ClassFollowers extends TwitterInstance {
       userNames.filterNot(x=>x==twitter.getScreenName).foreach(twitter.createFriendship)
       cursor = followerNames.getNextCursor().toInt
     }
-
-
   }
-
 }
 
 /**
@@ -48,14 +50,17 @@ trait TwitterInstance {
   val twitter = new TwitterFactory().getInstance
 }
 
-
 /**
-  *
+  * A bot that responds to be mentioned in the stream by MadLibbing
+  * the tweet and replying.
   */
 class MadLibBot extends TwitterInstance with StreamInstance {
   stream.addListener(new MadLibGen(twitter))
 }
 
+/**
+ * Companion object for MadLibBot.
+ */
 object MadLibBot {
     def main(args: Array[String]) {
       val bot = new MadLibBot
@@ -93,6 +98,7 @@ extends StatusListenerAdaptor with UserStreamListenerAdaptor {
   println("Starting MadLibBot.")
 
   val username = twitter.getScreenName
+  var latestVaccSearchId = 0L
 
   // Build Thesaurus
   println("Building Thesaurus...")
@@ -111,8 +117,35 @@ extends StatusListenerAdaptor with UserStreamListenerAdaptor {
   }
 
   val synonymMap = thesList.zip(tmpMap).toMap.mapValues{ v => v.flatMap{ x=> x.split("\\|").filterNot(_.contains("("))}}.withDefault(x=>Vector(x.toString))
+  
   println("Built Thesaurus with "+synonymMap.size+" words.")
+  println("Spawning periodic searcher...")
+
+  regularExecute(vaccineLinkSearch,300)
+
   println("Ready.")
+
+
+  def regularExecute(callback: () => Unit, time: Int) {
+    spawn {
+      while (true) { callback(); Thread sleep (time*1000) }
+    }
+  }
+
+  def vaccineLinkSearch(): Unit = {
+    println("New Vaccine Link Search...")
+    val Q = new Query("http vaccine")
+    Q.setSinceId(latestVaccSearchId)
+    val vaccSearch = twitter.search(Q)
+    val vaccTweets = vaccSearch.getTweets
+    
+    if (vaccTweets.size > 0) {
+      vaccTweets.foreach(tweet => println(tweet.getText))
+      latestVaccSearchId = vaccSearch.getMaxId()
+    } else {
+      println("No New Vaccine Links!")
+    }
+  }
 
   override def onStatus(status: Status) {
     val text = status.getText.toLowerCase
@@ -125,15 +158,15 @@ extends StatusListenerAdaptor with UserStreamListenerAdaptor {
       println("*************")
 
       val replyText = tokText.map{word =>
-        if (word.length < 3) word
+        if (word.length < 4) word
         else getSynonym(word)
       }.mkString(" ")
       
       println("New reply: " + status.getText)
       val text = "@" + status.getUser.getScreenName + " " + replyText
       println("Replying: " + text)
-      val reply = new StatusUpdate(text).inReplyToStatusId(status.getId)
-      twitter.updateStatus(reply)
+      //val reply = new StatusUpdate(text).inReplyToStatusId(status.getId)
+      //twitter.updateStatus(reply)
     }    
 
   }
