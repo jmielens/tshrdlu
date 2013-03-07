@@ -20,6 +20,7 @@ import twitter4j._
 import collection.JavaConversions._
 import scala.concurrent.ops._
 import sys.process._
+import cc.mallet._
 
 /**
  * Stand-alone Object used to follow all the followers of a given twitter
@@ -104,6 +105,8 @@ extends StatusListenerAdaptor with UserStreamListenerAdaptor {
   val username = twitter.getScreenName
   var latestVaccSearchId = 0L
 
+  val LinkExtract = """.*(http[\S]+).*""".r
+
   // Build Thesaurus
   println("Building Thesaurus...")
   val thesLines = io.Source.fromFile("src/main/resources/dict/en_thes").getLines.toVector
@@ -140,13 +143,36 @@ extends StatusListenerAdaptor with UserStreamListenerAdaptor {
 
   def vaccineLinkSearch(): Unit = {
     println("New Vaccine Link Search...")
+
+    // Build Query for tweets mentioning 'vaccine' and containing
+    // a link. Only get tweets newer than previously seen.
     val Q = new Query("http vaccine")
     Q.setSinceId(latestVaccSearchId)
     val vaccSearch = twitter.search(Q)
     val vaccTweets = vaccSearch.getTweets
     
     if (vaccTweets.size > 0) {
-      vaccTweets.foreach(tweet => println(tweet.getText))
+      println("Found New Vaccine Links...")
+
+      // Extract Link and render text from it using W3M
+      val vaccLinkToReply = vaccTweets.head
+      val LinkExtract(link) = vaccLinkToReply.getText
+      println("LINK: "+link)
+      val cmd = "./bin/w3m -dump "+link
+      val linkContent = cmd !!
+
+      // Build MALLET instance of new page
+
+
+      // Classify page with MALLET
+
+
+      // Build Tweet and send
+
+
+      
+      
+      // Update latest tweet counter
       latestVaccSearchId = vaccSearch.getMaxId()
     } else {
       println("No New Vaccine Links!")
