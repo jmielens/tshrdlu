@@ -285,6 +285,8 @@ extends StatusListenerAdaptor with UserStreamListenerAdaptor {
             SimpleTokenizer(withoutMention)
               .drop(1)
               .filter(_.length > 3)
+              .filterNot(_ == "what")
+              .filterNot(_ == "where")
               .toSet
               .take(2)
               .toList
