@@ -40,23 +40,61 @@
 
 \section{Behaviors}
 
-We modified the behavior of the automated Twitter user "tshrdlu." First we give a brief description of the four behaviors, with more details in the next section. The first is a listening behavior. Every thirty minutes the bot searches for tweets that contain both the word "vaccine" and a link. The bot uses a corpus-trained Naive Bayes classifier to identify the linked webpage as either "pseudoscience" or "science." The bot tweets about classification of the webpage and provides the link to it in the tweet. The bot also has four possible behaviors for responding to tweets directed at it (two of those are the original tshrdlu behaviors):
+We modified the behavior of the automated Twitter user "tshrdlu." First we give a brief description of the four behaviors, with more details in the following subsections. The first behavior is a listening behavior. Every thirty minutes the bot searches for tweets that contain both the word "vaccine" and a link. The bot uses a corpus-trained Naive Bayes classifier to identify the linked webpage as either "pseudoscience" or "science." The bot tweets about classification of the webpage and provides the link to it in the tweet. The bot also has four possible behaviors for responding to tweets directed at it (two of those are the original tshrdlu behaviors):
 
 \begin{itemize}
 \item paraphrase: it responds by taking the original tweet and replacing longer words with randomly-selected synonyms of those words.
-\item original standard: searches Twitter using a query made up of a subset of the original tweet's words and tweets the most relevant result (original tshrdlu behavior),
-\item enhanced standard: the same as the previous behavior, except the query is made up of synonyms of the words from the original tweet, rather than the exact words from the tweet.
+\item original tshrdlu response: searches Twitter using a query made up of a subset of the original tweet's words and tweets the most relevant result (original tshrdlu behavior),
+\item new standard response: the same as the previous behavior, except the query is made up of synonyms of the words from the original tweet, rather than the exact words from the tweet.
 \item follow: follows users that people ask it to follow (original tshrdlu behavior),
 \end{itemize}
 
-\subsection{Listening}
+Which response the bot takes when tweeted at depends on the contents of the tweet, and also on chance. As with tshrdlu, there is only one response to a tweet telling the bot to follow someone (assuming it is in the right format of "@jm_anlp follow @<some username>"). Namely the bot obeys the request to follow the indicated user, and then the bot tweets that it has followed the requested user. If the tweet to the bot is not a follow request, then with a probability of 0.9, the bot takes the "new standard response",
+The bot randomly chooses, with some probability, whether to use its "paraphrase" behavior or the "new standard" behavior.
 
-Periodically the bot searches for tweets that contain both the word "vaccine" and a link, and the bot classifies the linked page as "science" or "psuedoscience". This Naive Bayes classifier was trained on the corpus created by Beth and Evans (2012), in which documents (blog posts) are tagged as either "science" or "pseudoscience". The test accuracy was approximately 88 percent, and the training accuracy was about 92 percent.
+\subsection{Listening behavior}
+
+The bot has one listening behavior (i.e. it monitors Twitter on its own). Periodically the bot searches for tweets that contain both the word "vaccine" and a link, finds the most recent such tweet. The bot then classifies the linked page as "science" or "psuedoscience" and tweets about the results. This Naive Bayes classifier is trained on the corpus created by Beth and Evans (2012), in which documents (blog posts) are tagged as either "science" or "pseudoscience". The test accuracy is approximately 88 percent, and the training accuracy is about 92 percent.
+
 
 \subsection{Behaviors for mentions}
 
-Two novel mention behaviors were created for the bot, while retaining tshrdlu's original "follow" behavior, and "backing off" to tshrdlu's original "standard" behavior in some situations.
-The bot randomly chooses, with some probability, whether to use its "paraphrase" behavior 
+Two novel mention behaviors (i.e. actions to take when people tweet at the bot) were created for the bot, while retaining tshrdlu's original "follow" behavior, and "backing off" to tshrdlu's original "standard" behavior in some situations. As with tshrdlu, there is only one response to a tweet telling the bot to follow someone (if it is in the right format), and that is that the bot obeys, and then tweets that it has followed the requested person. If the tweet to the bot is not a follow request, 
+The bot randomly chooses, with some probability, whether to use its "paraphrase" behavior or the "new standard" behavior.
+
+
+%@jm_anlp You're too quiet today.
+%@evans_anlp This rain is so relaxing it has me sleepy again and I just woke up a couple of hours ago its going to be a long day!
+
+
+%@jm_anlp robot of cruelty !!!
+%@evans_anlp So in other words: mechanism of malice ! ! !
+%
+%@jm_anlp Ready for round two?
+%@evans_anlp Getting Ready For Believe Tour, Banging Out The Album And Dancing Round My Room, Can't Wait OMB!!!!!!?
+
+I read this article, not sure what to think.. http://www.theblaze.com/stories/2013/03/07/gop-congressman-makes-cdc-director-squirm-after-confronting-him-on-childrens-vaccine-cuts-let-me-get-this-straight/ É
+
+\begin{thebibliography}{}
+
+\bibitem[\protect\citename{Beth and Evans}2012]{Beth:12}
+Bradley~Beth, and James~Evans.
+\newblock 2012.
+\newblock A Theme-based Classifier for Skeptic and Pseudoscience Blog Posts using Latent Dirichlet Allocation.
+\newblock {\em Journal of Machine Learning Research}, 3:993-1022.
+
+
+\bibitem[\protect\citename{McCallum}2002]{McCallum:02}
+Andrew~ McCallum.
+\newblock 2002.
+\newblock MALLET: a Machine Learning for Language Toolkit.
+\newblock http://www.cs.umass.edu/âˆ¼mccallum/mallet.
+
+
+\end{thebibliography}
+
+\end{document}
+
 
 
 \end{document}
