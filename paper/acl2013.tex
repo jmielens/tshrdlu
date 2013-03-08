@@ -12,12 +12,13 @@
 %% Based on the style files for EACL 2006 by 
 %%e.agirre@ehu.es or Sergi.Balari@uab.es
 %% and that of ACL 08 by Joakim Nivre and Noah Smith
-
 \documentclass[11pt]{article}
 \usepackage{acl2013}
 \usepackage{times}
 \usepackage{url}
 \usepackage{latexsym}
+\usepackage{marvosym}
+\usepackage{hyperref}
 %\setlength\titlebox{6.5cm}    % You can expand the title box if you
 % really have to
 
@@ -40,40 +41,70 @@
 
 \section{Behaviors}
 
-We modified the behavior of the automated Twitter user "tshrdlu." First we give a brief description of the four behaviors, with more details in the following subsections. The first behavior is a listening behavior. Every thirty minutes the bot searches for tweets that contain both the word "vaccine" and a link. The bot uses a corpus-trained Naive Bayes classifier to identify the linked webpage as either "pseudoscience" or "science." The bot tweets about classification of the webpage and provides the link to it in the tweet. The bot also has four possible behaviors for responding to tweets directed at it (two of those are the original tshrdlu behaviors):
+We modified the behavior of the automated Twitter user ``tshrdlu." First we give a brief description of the four behaviors, with more details in the following subsections. The first behavior is a listening behavior. Every thirty minutes the bot searches for tweets that contain both the word ``vaccine" and a link. The bot uses a corpus-trained Naive Bayes classifier to identify the linked webpage as either ``pseudoscience" or ``science." The bot tweets about classification of the webpage and provides the link to it in the tweet. The bot also has four possible behaviors for responding to tweets directed at it (two of those are the original tshrdlu behaviors):
 
 \begin{itemize}
-\item paraphrase: it responds by taking the original tweet and replacing longer words with randomly-selected synonyms of those words.
-\item original tshrdlu response: searches Twitter using a query made up of a subset of the original tweet's words and tweets the most relevant result (original tshrdlu behavior),
-\item new standard response: the same as the previous behavior, except the query is made up of synonyms of the words from the original tweet, rather than the exact words from the tweet.
-\item follow: follows users that people ask it to follow (original tshrdlu behavior),
+\item Paraphrase: it responds by taking the original tweet and replacing longer words with randomly-selected synonyms of those words.
+\item Original tshrdlu response: searches Twitter using a query made up of a subset of the original tweet's words and tweets the most relevant result (original tshrdlu behavior),
+\item Synonym searching response: the same as the previous behavior, except the query is made up of synonyms of the words from the original tweet, rather than the exact words from the tweet.
+\item Follow: follows users that people ask it to follow (original tshrdlu behavior),
 \end{itemize}
 
-Which response the bot takes when tweeted at depends on the contents of the tweet, and also on chance. As with tshrdlu, there is only one response to a tweet telling the bot to follow someone (assuming it is in the right format of "@jm_anlp follow @<some username>"). Namely the bot obeys the request to follow the indicated user, and then the bot tweets that it has followed the requested user. If the tweet to the bot is not a follow request, then with a probability of 0.9, the bot takes the "new standard response",
-The bot randomly chooses, with some probability, whether to use its "paraphrase" behavior or the "new standard" behavior.
+Which response the bot takes when tweeted at depends on the contents of the tweet, and is also probabilistic. As with tshrdlu, there is only one response to a tweet telling the bot to follow someone (assuming it is in the right format -- ``{@}jm\_anlp follow $<$some username$>$"). Namely, the bot obeys the request to follow the indicated user and then tweets that it has done so. If the tweet to the bot is not a follow request, the the bot randomly chooses, with some probability, whether to use its ``paraphrase" behavior or the ``synonym searching" behavior. Currently the ratio is set as 90\% synonym searching and 10\% paraphrase.
 
-\subsection{Listening behavior}
+The synonym-based behaviors make use of a freely available thesaurus from OpenOffice.org, which we turn into a map from input word to synonyms. This thesaurus is included in the bot repo under /src/main/resources/dict/.
 
-The bot has one listening behavior (i.e. it monitors Twitter on its own). Periodically the bot searches for tweets that contain both the word "vaccine" and a link, finds the most recent such tweet. The bot then classifies the linked page as "science" or "psuedoscience" and tweets about the results. This Naive Bayes classifier is trained on the corpus created by Beth and Evans (2012), in which documents (blog posts) are tagged as either "science" or "pseudoscience". The test accuracy is approximately 88 percent, and the training accuracy is about 92 percent.
+\subsection{Listening Behavior}
 
+The bot has one listening behavior (i.e. it monitors Twitter on its own). Periodically, the bot searches for tweets that contain both the word ``vaccine" and a link (signified by the presence of ``http"), and finds the most recent such tweet. The bot then classifies the linked page as ``science" or ``psuedoscience" and tweets about the results. The linked page is retrieved using an HTML renderer (w3m) so that we are hopefully classifying only the actual article, and not a lot of 
 
-\subsection{Behaviors for mentions}
+The Naive Bayes classifier is trained on the corpus created by Beth and Evans (2012), in which documents (blog posts) are tagged as either ``science" or ``pseudoscience". The test accuracy is approximately 88 percent, and the training accuracy is about 92 percent. The classifier is included in the bot repo under /src/main/resources.
 
-Two novel mention behaviors (i.e. actions to take when people tweet at the bot) were created for the bot, while retaining tshrdlu's original "follow" behavior, and "backing off" to tshrdlu's original "standard" behavior in some situations. As with tshrdlu, there is only one response to a tweet telling the bot to follow someone (if it is in the right format), and that is that the bot obeys, and then tweets that it has followed the requested person. If the tweet to the bot is not a follow request, 
-The bot randomly chooses, with some probability, whether to use its "paraphrase" behavior or the "new standard" behavior.
+While listening, the bot keeps track of the latest tweet that it has seen. This enables it to only consider new tweets on the next search, and potentially not even say anything at all if it can't find any new relevent tweets. The listening behvaior is implemented as a separate thread that continues until the program is killed.
 
+\subsection{Behaviors for Mentions}
 
-%@jm_anlp You're too quiet today.
-%@evans_anlp This rain is so relaxing it has me sleepy again and I just woke up a couple of hours ago its going to be a long day!
+Two novel mention behaviors (i.e. actions to take when people tweet at the bot) were created for the bot, while retaining tshrdlu's original ``follow" behavior, and ``backing off" to tshrdlu's original ``standard" behavior in some situations. As with tshrdlu, there is only one response to a tweet telling the bot to follow someone (if it is in the right format), and that is that the bot obeys, and then tweets that it has followed the requested person.
 
+The default mention behavior is the synonym search, which requires that a candidate reply contain synonyms for at least two words in the original tweet. This seems to improve the relevance of the returned tweets, at the expense of being unable to find tweets in some instances. If no tweets can be found that statisfy this requirement, the bot backs-off to the original tshrdlu behavior of searching for any words in the original tweet.
 
-%@jm_anlp robot of cruelty !!!
-%@evans_anlp So in other words: mechanism of malice ! ! !
-%
-%@jm_anlp Ready for round two?
-%@evans_anlp Getting Ready For Believe Tour, Banging Out The Album And Dancing Round My Room, Can't Wait OMB!!!!!!?
+\section{Output analysis}
 
-I read this article, not sure what to think.. http://www.theblaze.com/stories/2013/03/07/gop-congressman-makes-cdc-director-squirm-after-confronting-him-on-childrens-vaccine-cuts-let-me-get-this-straight/ �
+Here are some examples of interactions with the bot, and associated commentary.
+
+\begin{itemize}
+\item {@}jm\_anlp You're too quiet today.
+\item {@}evans\_anlp This rain is so relaxing it has me sleepy again and I just woke up a couple of hours ago its going to be a long day!
+\end {itemize}
+
+In the first example, the bot takes ``quiet" and ``today" and gets a query of ``relaxing AND day," which returned the response tweet as the most recent relevant tweet. This is an excellent example of how the bot finds relevant tweets that would not be found if it only made queries from the exact words in the tweet that it is responding to. Now consider the next example interaction:
+
+\begin{itemize}
+\item {@} jm\_anlp Ready for round two?
+\item {@} evans\_anlp Getting Ready For Believe Tour, Banging Out The Album And Dancing Round My Room, Can't Wait OMB!!!!!!♥
+\end {itemize}
+
+In this instance, because the word-to-synonym function can potentially map words to themselves, the bot did search only for words from the tweet: ``ready AND round." In this case, it looks just like the original tshrdlu behavior, but it is not (even though our bot does back off to that behavior in some cases, as mentioned in the section on 1.2). The following is an example of the paraphrase behavior:
+
+\begin{itemize}
+\item {@}jm\_anlp robot of cruelty !!!
+\item {@}evans\_anlp So in other words: mechanism of malice ! ! !
+\end {itemize}
+
+The mapping of longer words to synonyms is self-explanatory. Finally, here is an example of a spontaneous tweet about a vaccine-related article:
+
+\begin{itemize}
+\item I read this article, not sure what to think.. http://www.theblaze.com/stories/2013/0…
+\end{itemize}
+
+In this case, the classification of ``pseudoscience" is probably not right. However, it isn't a particularly scientific- or skeptic-sounding article either. The linked article is mostly reporting on a politician's position about funding for vaccinations. It is for this general reason that the bot hedges the classification results (i.e. ``Not sure what to think" vs. ``Sounds pretty legit").
+
+\section{Future Work}
+We are content with the varied behaviors of our current bot at this phase of the project, but we have several more ideas to further enhance the bot for the final project. One thing we plan to do is to create a behavior in which the bot looks at the user who has tweeted to it, finds more tweets that the user has posted, and creates an n-gram model of that user's language in order to generate a response tweet. 
+
+We also plan to enable the both to save all past interactions, so that it can remember what kinds of things particular users like to talk to the bot about. It could use this information to customize its responses to users who tweet to the bot more than once. 
+
+We also would like to expand the classification to health topics other than vaccination (i.e. to use the rest of the Beth and Evans corpus, which covers topics like acupuncture).
 
 \begin{thebibliography}{}
 
@@ -88,7 +119,7 @@ Bradley~Beth, and James~Evans.
 Andrew~ McCallum.
 \newblock 2002.
 \newblock MALLET: a Machine Learning for Language Toolkit.
-\newblock http://www.cs.umass.edu/∼mccallum/mallet.
+\newblock http://www.cs.umass.edu/âˆ¼mccallum/mallet.
 
 
 \end{thebibliography}
