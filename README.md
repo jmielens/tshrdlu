@@ -3,11 +3,13 @@
 
 Authors: **Jim Evans and Jason Mielens** ( {j.s.evans,jmielens}@utexas.edu )
 
-This is a fork of the original tshrdlu repository used for a class project 
+This is a fork of the original tshrdlu repository used for a class project. Compared to the original tshrdlu, our version makes use of synonyms in interesting ways and also periodically tweets spontaneously.
 
-The name "tshrdlu" comes from Twitter+[SHRDLU](http://en.wikipedia.org/wiki/SHRDLU).
+This project makes use of the sbt build system. To run, start sbt, compile, and issue the following command:
 
-For more information, updates, etc., follow [@appliednlp](https://twitter.com/appliednlp) on Twitter. The [@tshrdlu](https://twitter.com/tshrdlu) account may also start doing some tweeting of its own soon (by which I mean automated tweeting).
+run-main tshrdlu.twitter.JJBot {listen}
+
+Where {listen} is an optional parameter that is either 'true' or 'false' and determine whether the bot listens for health-related tweets with links and attempts to classify them.
 
 ## Requirements
 
