@@ -53,38 +53,49 @@ trait TwitterInstance {
 }
 
 /**
-  * A bot that responds to be mentioned in the stream by MadLibbing
-  * the tweet and replying.
+  * A bot that responds to be mentioned in the stream by paraphrase
+  * the tweet and replying. Also optionally listens to health related
+  * tweets with links and analyzes the content of those links -- Classifying
+  * them as either Skeptic or Pseudoscience based.
+  *
+  * @param listen Whether or not to monitor health-related tweets
   */
-class MadLibBot (listen: Boolean) extends TwitterInstance with StreamInstance {
-  stream.addListener(new MadLibGen(twitter,listen))
+class JJBot (listen: Boolean) extends TwitterInstance with StreamInstance {
+  stream.addListener(new JJGen(twitter,listen))
 }
 
 /**
- * Companion object for MadLibBot.
+ * Companion object for JJBot.
  */
-object MadLibBot {
+object JJBot {
     def main(args: Array[String]) {
       var listen = false
       if (args.size > 0) {
         listen = args(0).toBoolean
       }
-      val bot = new MadLibBot(listen)
+      val bot = new JJBot(listen)
       bot.stream.user
     }
 }
 
-
-class MadLibGen(twitter: Twitter, listen: Boolean) 
+/**
+  * Provides implementation for the behaviors the JJBot requires. See individual
+  * functions for specific details.
+  *
+  * @param twitter Twitter instance
+  * @param listen Whether to listen for health-related tweets
+  */
+class JJGen(twitter: Twitter, listen: Boolean) 
 extends StatusListenerAdaptor with UserStreamListenerAdaptor {
   import chalk.util.SimpleTokenizer
   import collection.JavaConversions._
 
-  println("Starting MadLibBot.")
+  println("Starting JJBot.")
 
+  // Basic Variables
   val username = twitter.getScreenName
-  var latestVaccSearchId = 0L
-
+  var latestVaccSearchId = 0L   // Stores the highest Tweet ID we've seen,
+                                // Used to ensure next tweets we get are newer.
   val LinkExtract = """.*(http[\S]+).*""".r
 
   // Build Thesaurus
@@ -107,14 +118,20 @@ extends StatusListenerAdaptor with UserStreamListenerAdaptor {
   
   println("Built Thesaurus with "+synonymMap.size+" words.")
   
+  // If we are listening for health-related tweets, then spawn a new thread to do that regularly.
   if (listen) {
     println("Spawning periodic searcher...")
     regularExecute(vaccineLinkSearch,1800)
   }
 
-  println("Ready.")
+  println("Ready for tweets.")
 
-
+  /**
+    * Spawns a new thread that loops forever and calls a supplied callback function regularly.
+    *
+    * @param callback A function with no arguments that returns Unit - called repeatedly until program exits.
+    * @param time The number of seconds between callback function calls.
+    */
   def regularExecute(callback: () => Unit, time: Int) {
     spawn {
       while (true) { callback(); Thread sleep (time*1000) }
@@ -191,8 +208,6 @@ extends StatusListenerAdaptor with UserStreamListenerAdaptor {
   // Recognize a follow command
   val FollowRE = """(?i)(?<=follow)(\s+(me|@[a-z]+))+""".r
 
-
-
   // Pull the RT and mentions from the front of a tweet.
   val StripMentionsRE = """(?:)(?:RT\s)?(?:(?:@[a-z]+\s))+(.*)$""".r   
   override def onStatus(status: Status) {
@@ -201,10 +216,13 @@ extends StatusListenerAdaptor with UserStreamListenerAdaptor {
     if (replyName == username) {
       println("*************")
       println("New reply: " + status.getText)
-      val text = "@" + status.getUser.getScreenName + " " + doActionGetReply(status)
-      println("Replying: " + text)
-      val reply = new StatusUpdate(text).inReplyToStatusId(status.getId)
-      twitter.updateStatus(reply)
+      val tmp = doActionGetReply(status)
+      if (tmp.toString != "NO.") {
+        val text = "@" + status.getUser.getScreenName + " " + tmp
+        println("Replying: " + text)
+        val reply = new StatusUpdate(text).inReplyToStatusId(status.getId)
+        twitter.updateStatus(reply)
+      }
     }
   }
  
@@ -215,9 +233,12 @@ extends StatusListenerAdaptor with UserStreamListenerAdaptor {
   def doActionGetReply(status: Status) = {
     // Pull just the lead mention from a tweet.
     val StripLeadMentionRE = """(?:)^@[a-z]+\s(.*)$""".r
+    
     val text = status.getText.toLowerCase
     val followMatches = FollowRE.findAllIn(text)
+    
     if (!followMatches.isEmpty) {
+      // Follow Behavior
       val followSet = followMatches
   .next
   .drop(1)
@@ -228,49 +249,69 @@ extends StatusListenerAdaptor with UserStreamListenerAdaptor {
   }
   .toSet
       followSet.foreach(twitter.createFriendship)
-      "OK. I FOLLOWED " + followSet.map("@"+_).mkString(" ") + "."  
+      "OK. I followed " + followSet.map("@"+_).mkString(" ") + "."  
     } else {
+      // If we are not supposed to follow anyone...
       val rnd = new scala.util.Random(System.currentTimeMillis())
       val r = rnd.nextDouble()
 
+      // With probability 0.1, paraphrase the incoming tweet, otherwise use the generic reply
       if (r > 0.9) {
-        // Madlib
+        // Paraphrase Behavior
         try {
           val withoutMention = text
           val tokText = SimpleTokenizer(text).drop(1)
+
+          // The reply is a map from the original tokens to the synonyms,
+          // and short words are returned unaltered.
           val replyText = tokText.map{word =>
             if (word.length < 4) word
             else getSynonym(word)
           }.mkString(" ")
+          
+          // Output new Status
           "So in other words: "+replyText
+        
         } catch { 
-          case _: Throwable => "RANDOM NO."
+          case _: Throwable => "I have no idea."
         }
       } else {
         // Generic Reply
         try {
           val withoutMention = text
+
+          // Get a list of vectors of synonyms for two long words 
           val wordList = 
             SimpleTokenizer(withoutMention)
               .drop(1)
               .filter(_.length > 3)
+              .filterNot(_ == "what")
+              .filterNot(_ == "where")
               .toSet
               .take(2)
               .toList
               .map(x=>getSynonyms(x,5))
 
-          wordList.foreach(w => println(w))
+          //wordList.foreach(w => println(w))
 
+          // Build a query, such that a returned tweet has a synonym of each long word.
+          // for instance "blue house" => (cyan OR navy OR sad) AND (domicile OR residence)
           val q = wordList.map(x=>x.mkString(" OR ")).map(x=>"("+x+")").mkString(" AND ")
           println("Query: " +q)
+
+          // Search using our built query
           val statusList = twitter.search(new Query(q)).getTweets.toList
           val prospectiveReply = extractText(statusList)
 
+          // If we couldn't find any tweets with the synonyms, back-off to a search for
+          // the original words. This happens because in the synonym match we require multiple
+          // words (see the example above) in a tweet, which limits the number of returned tweets. 
           if (prospectiveReply == "NO.") {
             try {
               val withoutMention = text
               val statusList =
                 SimpleTokenizer(withoutMention)
+                .drop(1)
                 .filter(_.length > 3)
                 .filter(_.length < 10)
                 .sortBy(- _.length)
@@ -280,14 +321,17 @@ extends StatusListenerAdaptor with UserStreamListenerAdaptor {
                 .flatMap(w => twitter.search(new Query(w)).getTweets)
                 extractText(statusList)
             } catch {
-              case _: Throwable => "NO."
+              // If we can't find any tweets, try and prompt the original tweeter
+              // to rephrase and possibly elaborate.
+              case _: Throwable => "What exactly do you mean by that?"
             }
           } else {
+            // Return the found reply with synonyms
             prospectiveReply
           }
 
         } catch { 
-          case _: Throwable => "GENERIC NO."
+          case _: Throwable => "NO."
         }
       }
     }
@@ -312,6 +356,12 @@ extends StatusListenerAdaptor with UserStreamListenerAdaptor {
     if (useableTweets.isEmpty) "NO." else useableTweets.head
   }
 
+  /**
+    * Returns a random synonym for a provided word. If the thesaurus
+    * does not contain the word, this function simply returns the word itself.
+    *
+    * @param word The word to find a synonym for.
+    */
   def getSynonym(word: String):String = {
     val cands = synonymMap(word)
     val rnd = new scala.util.Random(System.currentTimeMillis())
@@ -319,6 +369,12 @@ extends StatusListenerAdaptor with UserStreamListenerAdaptor {
     cands(r) 
   }
 
+  /**
+    * Returns a number of synonyms for a given word as a vector of strings.
+    *
+    * @param word The word to find synonyms for.
+    * @param num How many synonyms are desired.
+    */
   def getSynonyms(word: String, num: Int):Vector[String] = {
     val cands = synonymMap(word)
     cands.take(num).toVector
