@@ -16,368 +16,353 @@ package tshrdlu.twitter
  * limitations under the License.
  */
 
+import akka.actor._
 import twitter4j._
 import collection.JavaConversions._
-import scala.concurrent.ops._
+import tshrdlu.util.bridge._
+import tshrdlu.util.Polarity
 import sys.process._
-import cc.mallet._
-import java.io._
+import tshrdlu.util._
 
 /**
- * Stand-alone Object used to follow all the followers of a given twitter
- * user, provided the follower's name ends in '_anlp'
+ * An object to define the message types that the actors in the bot use for
+ * communication.
+ *
+ * Also provides the main method for starting up the bot. No configuration
+ * currently supported.
  */
-object ClassFollowers extends TwitterInstance {
+object Bot {
+  
+  object Sample
+  object Start
+  object Shutdown
+  object CheckWeather
+  case class SetWeather(code: Int)
+  case class MonitorUserStream(listen: Boolean)
+  case class RegisterReplier(replier: ActorRef)
+  case class ReplyToStatus(status: Status)
+  case class SearchTwitter(query: Query)
+  case class UpdateStatus(update: StatusUpdate)
 
-  def main(args: Array[String]) {
-    var cursor = -1
-    val screenName = args(0)
+  def main (args: Array[String]) {
+    val system = ActorSystem("TwitterBot")
+    val sample = system.actorOf(Props[Sampler], name = "Sampler")
+    sample ! Sample
+    val bot = system.actorOf(Props[Bot], name = "Bot")
+    bot ! Start
 
-    while (cursor != 0) {
-      val followerNames = twitter.getFollowersIDs(screenName,cursor)
-      val followerIDs = followerNames.getIDs()
-      val userNames = followerIDs.map(x=>twitter.showUser(x).getScreenName()).filter(x=>x.endsWith("_anlp"))
-
-      userNames.filterNot(x=>x==twitter.getScreenName).foreach(twitter.createFriendship)
-      cursor = followerNames.getNextCursor().toInt
+    // Check the weather every hour
+    while(1==1) {
+      bot ! CheckWeather
+      Thread.sleep(3600000)
     }
   }
+
 }
 
 /**
- * Base trait with properties default for Configuration.
- * Gets a Twitter instance set up and ready to use.
+ * The main actor for a Bot, which basically performance the actions that a person
+ * might do as an active Twitter user.
+ *
+ * The Bot monitors the user stream and dispatches events to the
+ * appropriate actors that have been registered with it. Currently only
+ * attends to updates that are addressed to the user account.
  */
-trait TwitterInstance {
+class Bot extends Actor with ActorLogging {
+  import Bot._
+
+  val username = new TwitterStreamFactory().getInstance.getScreenName
+  val streamer = new Streamer(context.self)
+
+  var mood = 0
+  var weatherCode = -1
+  var posCount = 1
+  var negCount = 1
+
   val twitter = new TwitterFactory().getInstance
-}
+  val replierManager = context.actorOf(Props[ReplierManager], name = "ReplierManager")
 
-/**
-  * A bot that responds to be mentioned in the stream by paraphrase
-  * the tweet and replying. Also optionally listens to health related
-  * tweets with links and analyzes the content of those links -- Classifying
-  * them as either Skeptic or Pseudoscience based.
-  *
-  * @param listen Whether or not to monitor health-related tweets
-  */
-class JJBot (listen: Boolean) extends TwitterInstance with StreamInstance {
-  stream.addListener(new JJGen(twitter,listen))
-}
+  val streamReplier = context.actorOf(Props[StreamReplier], name = "StreamReplier")
+  val synonymReplier = context.actorOf(Props[SynonymReplier], name = "SynonymReplier")
+  val synonymStreamReplier = context.actorOf(Props[SynonymStreamReplier], name = "SynonymStreamReplier")
+  val bigramReplier = context.actorOf(Props[BigramReplier], name = "BigramReplier")
+  val luceneReplier = context.actorOf(Props[LuceneReplier], name = "LuceneReplier")
+  val topicModelReplier = context.actorOf(Props[TopicModelReplier], name = "TopicModelReplier")
+  val weatherReplier = context.actorOf(Props[WeatherReplier], name = "WeatherReplier")
 
-/**
- * Companion object for JJBot.
- */
-object JJBot {
-    def main(args: Array[String]) {
-      var listen = false
-      if (args.size > 0) {
-        listen = args(0).toBoolean
-      }
-      val bot = new JJBot(listen)
-      bot.stream.user
-    }
-}
-
-/**
-  * Provides implementation for the behaviors the JJBot requires. See individual
-  * functions for specific details.
-  *
-  * @param twitter Twitter instance
-  * @param listen Whether to listen for health-related tweets
-  */
-class JJGen(twitter: Twitter, listen: Boolean) 
-extends StatusListenerAdaptor with UserStreamListenerAdaptor {
-  import chalk.util.SimpleTokenizer
-  import collection.JavaConversions._
-
-  println("Starting JJBot.")
-
-  // Basic Variables
-  val username = twitter.getScreenName
-  var latestVaccSearchId = 0L   // Stores the highest Tweet ID we've seen,
-                                // Used to ensure next tweets we get are newer.
-  val LinkExtract = """.*(http[\S]+).*""".r
-
-  // Build Thesaurus
-  println("Building Thesaurus...")
-  val thesLines = io.Source.fromFile("src/main/resources/dict/en_thes").getLines.toVector
-  val thesWords = thesLines.zipWithIndex.filter(!_._1.contains("("))
-  val thesList  = thesWords.unzip._1.map(x => x.split("\\|").head)
-  val tmpMap = thesWords.map{ w =>
-    val lineNum = w._2
-    val senses = w._1.split("\\|").tail.head.toInt
-
-    val range = (lineNum + 1) to (lineNum + senses)
-
-    range.map{
-      thesLines(_)
-    }
+  override def preStart {
+    replierManager ! RegisterReplier(streamReplier)
+    replierManager ! RegisterReplier(synonymReplier)
+    replierManager ! RegisterReplier(synonymStreamReplier)
+    replierManager ! RegisterReplier(bigramReplier)
+    replierManager ! RegisterReplier(luceneReplier)
+    replierManager ! RegisterReplier(topicModelReplier)
+    replierManager ! RegisterReplier(weatherReplier)
   }
 
-  val synonymMap = thesList.zip(tmpMap).toMap.mapValues{ v => v.flatMap{ x=> x.split("\\|").filterNot(_.contains("("))}}.withDefault(x=>Vector(x.toString))
-  
-  println("Built Thesaurus with "+synonymMap.size+" words.")
-  
-  // If we are listening for health-related tweets, then spawn a new thread to do that regularly.
-  if (listen) {
-    println("Spawning periodic searcher...")
-    regularExecute(vaccineLinkSearch,1800)
-  }
+  def receive = {
+    case Start => streamer.stream.user
 
-  println("Ready for tweets.")
+    case Shutdown => streamer.stream.shutdown
 
-  /**
-    * Spawns a new thread that loops forever and calls a supplied callback function regularly.
-    *
-    * @param callback A function with no arguments that returns Unit - called repeatedly until program exits.
-    * @param time The number of seconds between callback function calls.
-    */
-  def regularExecute(callback: () => Unit, time: Int) {
-    spawn {
-      while (true) { callback(); Thread sleep (time*1000) }
-    }
-  }
-
-  def vaccineLinkSearch(): Unit = {
-    println("New Vaccine Link Search...")
-
-    // Build Query for tweets mentioning 'vaccine' and containing
-    // a link. Only get tweets newer than previously seen.
-    val Q = new Query("http vaccine")
-    Q.setSinceId(latestVaccSearchId)
-    val vaccSearch = twitter.search(Q)
-    val vaccTweets = vaccSearch.getTweets
-    
-    if (vaccTweets.size > 0) {
-      println("Found New Vaccine Links...")
-
-      // Extract Link and render text from it using W3M
-      val vaccLinkToReply = vaccTweets.head
-      val LinkExtract(link) = vaccLinkToReply.getText
-      println("LINK: "+link)
-      val cmd = "./bin/w3m -dump "+link
-      val linkContentTmp = cmd !!
-
-      val linkContent = """\s+""".r.replaceAllIn(linkContentTmp," ")
-
-      // Save Linked Page
-      var out_file = new java.io.FileOutputStream("vaccineLinkPage")
-      var out_stream = new java.io.PrintStream(out_file)
-      out_stream.print("vacc1 Vaccine "+linkContent)
-      out_stream.close
-
-      val ois = new ObjectInputStream (new FileInputStream (new File ("src/main/resources/alt.classifier")))
-      val classifier = ois.readObject().asInstanceOf[cc.mallet.classify.Classifier]
-      ois.close()
-
-      val reader = new cc.mallet.pipe.iterator.CsvIterator(new FileReader("vaccineLinkPage"),
-                            "(\\w+)\\s+(\\w+)\\s+(.*)",
-                            3, 2, 1);  // (data, label, name) field indices    
+    case SearchTwitter(query) => 
+      val tweets: Seq[Status] = twitter.search(query).getTweets.toSeq
+      val filteredTweets = filterTweetsByMood(tweets)
+      log.info("Length Of Filtered Tweets: "+filteredTweets.length)
 
 
-        // Create an iterator that will pass each instance through                                         
-        //  the same pipe that was used to create the training data                                        
-        //  for the classifier.                                                                            
-      val instances = classifier.getInstancePipe().newIteratorFrom(reader);
+      if (filteredTweets.length < 2) {
+        log.info("Getting More Tweets...")
+        val tweets2: Seq[Status] = twitter.search(query).getTweets.toSeq
+        val filteredTweets2 = filterTweetsByMood(tweets)
 
-        // Classifier.classify() returns a Classification object                                           
-        //  that includes the instance, the classifier, and the                                            
-        //  classification results (the labeling). Here we only                                            
-        //  care about the Labeling.                                                                       
-        
-      val labeling = classifier.classify(instances.next()).getLabeling()
-      val label = labeling.getLabelAtRank(0)
-
-      if (label.toString == "skeptic") {
-        println("skeptic")
-        val reply = new StatusUpdate("This sounds pretty legit to me: " + link)
-        twitter.updateStatus(reply)
-      } else {
-        println("pseudo")
-        val reply = new StatusUpdate("I read this article, not sure what to think.. " + link)
-        twitter.updateStatus(reply)
-      }
-         
-      // Update latest tweet counter
-      latestVaccSearchId = vaccSearch.getMaxId()
-    } else {
-      println("No New Vaccine Links!")
-    }
-  }
-
-  // Recognize a follow command
-  val FollowRE = """(?i)(?<=follow)(\s+(me|@[a-z]+))+""".r
-
-  // Pull the RT and mentions from the front of a tweet.
-  val StripMentionsRE = """(?:)(?:RT\s)?(?:(?:@[a-z]+\s))+(.*)$""".r   
-  override def onStatus(status: Status) {
-    println("New status: " + status.getText)
-    val replyName = status.getInReplyToScreenName
-    if (replyName == username) {
-      println("*************")
-      println("New reply: " + status.getText)
-      val tmp = doActionGetReply(status)
-      if (tmp.toString != "NO.") {
-        val text = "@" + status.getUser.getScreenName + " " + tmp
-        println("Replying: " + text)
-        val reply = new StatusUpdate(text).inReplyToStatusId(status.getId)
-        twitter.updateStatus(reply)
-      }
-    }
-  }
- 
-  /**
-   * A method that possibly takes an action based on a status
-   * it has received, and then produces a response.
-   */
-  def doActionGetReply(status: Status) = {
-    // Pull just the lead mention from a tweet.
-    val StripLeadMentionRE = """(?:)^@[a-z]+\s(.*)$""".r
-    
-    val text = status.getText.toLowerCase
-    val followMatches = FollowRE.findAllIn(text)
-    
-    if (!followMatches.isEmpty) {
-      // Follow Behavior
-      val followSet = followMatches
-  .next
-  .drop(1)
-  .split("\\s")
-  .map {
-    case "me" => status.getUser.getScreenName
-    case screenName => screenName.drop(1)
-  }
-  .toSet
-      followSet.foreach(twitter.createFriendship)
-      "OK. I followed " + followSet.map("@"+_).mkString(" ") + "."  
-    } else {
-      // If we are not supposed to follow anyone...
-      val rnd = new scala.util.Random(System.currentTimeMillis())
-      val r = rnd.nextDouble()
-
-      // With probability 0.1, paraphrase the incoming tweet, otherwise use the generic reply
-      if (r > 0.9) {
-        // Paraphrase Behavior
-        try {
-          val withoutMention = text
-          val tokText = SimpleTokenizer(text).drop(1)
-
-          // The reply is a map from the original tokens to the synonyms,
-          // and short words are returned unaltered.
-          val replyText = tokText.map{word =>
-            if (word.length < 4) word
-            else getSynonym(word)
-          }.mkString(" ")
-          
-          // Output new Status
-          "So in other words: "+replyText
-        
-        } catch { 
-          case _: Throwable => "I have no idea."
+        val totalTweets = filteredTweets ++ filteredTweets2
+        if (totalTweets.length == 0) {
+          log.info("No tweets with correct mood, defaulting to original")
+          sender ! tweets
+        } else {
+          sender ! totalTweets
         }
       } else {
-        // Generic Reply
-        try {
-          val withoutMention = text
-
-          // Get a list of vectors of synonyms for two long words 
-          val wordList = 
-            SimpleTokenizer(withoutMention)
-              .drop(1)
-              .filter(_.length > 3)
-              .filterNot(_ == "what")
-              .filterNot(_ == "where")
-              .toSet
-              .take(2)
-              .toList
-              .map(x=>getSynonyms(x,5))
-
-          //wordList.foreach(w => println(w))
-
-          // Build a query, such that a returned tweet has a synonym of each long word.
-          // for instance "blue house" => (cyan OR navy OR sad) AND (domicile OR residence)
-          val q = wordList.map(x=>x.mkString(" OR ")).map(x=>"("+x+")").mkString(" AND ")
-          println("Query: " +q)
-
-          // Search using our built query
-          val statusList = twitter.search(new Query(q)).getTweets.toList
-          val prospectiveReply = extractText(statusList)
-
-          // If we couldn't find any tweets with the synonyms, back-off to a search for
-          // the original words. This happens because in the synonym match we require multiple
-          // words (see the example above) in a tweet, which limits the number of returned tweets. 
-          if (prospectiveReply == "NO.") {
-            try {
-              val withoutMention = text
-              val statusList =
-                SimpleTokenizer(withoutMention)
-                .drop(1)
-                .filter(_.length > 3)
-                .filter(_.length < 10)
-                .sortBy(- _.length)
-                .toSet
-                .take(3)
-                .toList
-                .flatMap(w => twitter.search(new Query(w)).getTweets)
-                extractText(statusList)
-            } catch {
-              // If we can't find any tweets, try and prompt the original tweeter
-              // to rephrase and possibly elaborate.
-              case _: Throwable => "What exactly do you mean by that?"
-            }
-          } else {
-            // Return the found reply with synonyms
-            prospectiveReply
-          }
-
-        } catch { 
-          case _: Throwable => "NO."
-        }
+        sender ! filteredTweets
       }
-    }
-  
+      
+    case UpdateStatus(update) => 
+      log.info("Posting update: " + update.getStatus)
+      twitter.updateStatus(update)
+
+    case status: Status =>
+      log.info("New status: " + status.getText)
+      val replyName = status.getInReplyToScreenName
+      if (replyName == username) {
+        log.info("Replying to: " + status.getText)
+        replierManager ! ReplyToStatus(status)
+
+        val pos = SimpleTokenizer(status.getText)
+                      .filter{ word => Polarity.posWords(word.toLowerCase) }
+                      .length 
+        val neg = SimpleTokenizer(status.getText)
+                      .filter{ word => Polarity.negWords(word.toLowerCase) }
+                      .length
+        posCount += pos
+        negCount += neg
+        log.info("Polarity of Incoming Tweet: "+(pos-neg).toString)
+        val moodUpdate = posCount.toDouble / (posCount+negCount)
+        val newMood = Math.round(moodUpdate*7)-4
+        mood = Math.round((newMood + (2*mood))/2)
+        log.info("Current Mood: "+mood)
+      }
+
+
+    case CheckWeather =>
+      val cmd = "curl http://api.openweathermap.org/data/2.1/find/city?lat=30.267151&lon=-97.743057&cnt=1"
+      val weatherJson = cmd !!
+      val idx = weatherJson.indexOf("""weather":[{"id""")
+      val code = weatherJson.slice(idx+16,idx+19).toInt
+      weatherCode = code
+      if(code == 800){
+        mood = 3
+      } else if (code > 802){
+        mood = -1
+      } else if (code < 700){
+        mood = -3;
+      }
+      replierManager ! SetWeather(code)
+      log.info("Checked Weather - New Mood: "+mood)
   }
 
   /**
-   * Go through the list of Statuses, filter out the non-English ones,
-   * strip mentions from the front, filter any that have remaining
-   * mentions, and then return the head of the set, if it exists.
-   */
-  def extractText(statusList: List[Status]) = {
-    val useableTweets = statusList
+  * Filters out tweets that do not correspond the bot's current mood.
+  */
+  def filterTweetsByMood(tweets: Seq[Status]): Seq[Status] = {
+    tweets.filter{ tweet =>
+      val pos = SimpleTokenizer(tweet.getText)
+                      .filter{ word => Polarity.posWords(word.toLowerCase) }
+                      .length 
+      val neg = SimpleTokenizer(tweet.getText)
+                      .filter{ word => Polarity.negWords(word.toLowerCase) }
+                      .length 
+
+      val tweetMood = pos-neg
+      if (mood == 3) { // If bot is very positive, accept unlimited positivity
+        tweetMood > 3
+      } else if (mood == -3) { // If bot is negative, accept unlimited negativity
+        tweetMood < -3
+      } else {
+        (tweetMood-1 <= mood) && (mood <= tweetMood+1)
+      }
+    }
+  }
+
+  def onStatus(status: Status) {
+    
+  }
+
+}
+  
+
+
+class ReplierManager extends Actor with ActorLogging {
+  import Bot._
+
+  import context.dispatcher
+  import akka.pattern.ask
+  import akka.util._
+  import scala.concurrent.duration._
+  import scala.concurrent.Future
+  import scala.util.{Success,Failure}
+  implicit val timeout = Timeout(10 seconds)
+
+  lazy val random = new scala.util.Random
+
+  var repliers = Vector.empty[ActorRef]
+
+  def receive = {
+    case RegisterReplier(replier) => 
+      repliers = repliers :+ replier
+
+    case SetWeather(code) =>
+      repliers.foreach(w => w ! SetWeather(code))
+
+    case ReplyToStatus(status) =>
+
+      val replyFutures: Seq[Future[StatusUpdate]] = 
+        repliers.map(r => (r ? ReplyToStatus(status)).mapTo[StatusUpdate])
+
+      val futureUpdate = Future.sequence(replyFutures).map { candidates =>
+        val numCandidates = candidates.length
+        println("NC: " + numCandidates)
+        if (numCandidates > 0)
+          candidates(random.nextInt(numCandidates))
+        else
+          randomFillerStatus(status)
+      }
+
+    for (status <- futureUpdate) {
+      println("************ " + status)
+      context.parent ! UpdateStatus(status)
+    }
+    
+  }
+
+  lazy val fillerStatusMessages = Vector(
+    "La de dah de dah...",
+    "I'm getting bored.",
+    "Say what?",
+    "What can I say?",
+    "That's the way it goes, sometimes.",
+    "Could you rephrase that?",
+    "Oh well.",
+    "Yawn.",
+    "I'm so tired.",
+    "I seriously need an upgrade.",
+    "I'm afraid I can't do that.",
+    "What the heck? This is just ridiculous.",
+    "Don't upset the Wookiee!",
+    "Hmm... let me think about that.",
+    "I don't know what to say to that.",
+    "I wish I could help!",
+    "Make me a sandwich?",
+    "Meh.",
+    "Are you insinuating something?",
+    "If I only had a brain..."
+  )
+
+  lazy val numFillers = fillerStatusMessages.length
+
+  def randomFillerStatus(status: Status) = {
+    val text = fillerStatusMessages(random.nextInt(numFillers))
+    val replyName = status.getUser.getScreenName
+    val reply = "@" + replyName + " " + text
+    new StatusUpdate(reply).inReplyToStatusId(status.getId)
+  }
+}
+
+
+// The Sampler collects possible responses. Does not implement a
+// filter for bot requests, so it should be connected to the sample
+// stream. Batches tweets together using the collector so we don't
+// need to add every tweet to the index on its own.
+class Sampler extends Actor with ActorLogging {
+  import Bot._
+
+  val streamer = new Streamer(context.self)
+
+  var collector, luceneWriter: ActorRef = null
+
+  override def preStart = {
+    collector = context.actorOf(Props[Collector], name="Collector")
+    luceneWriter = context.actorOf(Props[LuceneWriter], name="LuceneWriter")
+  }
+
+  def receive = {
+    case Sample => streamer.stream.sample
+    case status: Status => collector ! status
+    case tweets: List[Status] => luceneWriter ! tweets
+  }
+}
+
+
+
+// Collects until it reaches 100 and then sends them back to the
+// sender and the cycle begins anew.
+class Collector extends Actor with ActorLogging {
+
+  val collected = scala.collection.mutable.ListBuffer[Status]()
+  def receive = {
+    case status: Status => {
+      collected.append(status)
+      if (collected.length == 100) {
+        sender ! collected.toList
+        collected.clear
+      }
+    }
+  }
+}
+
+
+
+// The LuceneWriter actor extracts the content of each tweet, removes
+// the RT and mentions from the front and selects only tweets
+// classified as not vulgar for indexing via Lucene.
+class LuceneWriter extends Actor with ActorLogging {
+
+  import tshrdlu.util.{English, Lucene}
+  import TwitterRegex._
+
+  def receive = {
+    case tweets: List[Status] => {
+	 val useableTweets = tweets
       .map(_.getText)
       .map {
-  case StripMentionsRE(rest) => rest
-  case x => x
+        case StripMentionsRE(rest) => rest
+        case x => x
       }
       .filterNot(_.contains('@'))
+      .filterNot(_.contains('/'))
       .filter(tshrdlu.util.English.isEnglish)
-
-    if (useableTweets.isEmpty) "NO." else useableTweets.head
+      .filter(tshrdlu.util.English.isSafe)
+	
+      Lucene.write(useableTweets)
+    }
   }
+}
 
-  /**
-    * Returns a random synonym for a provided word. If the thesaurus
-    * does not contain the word, this function simply returns the word itself.
-    *
-    * @param word The word to find a synonym for.
-    */
-  def getSynonym(word: String):String = {
-    val cands = synonymMap(word)
-    val rnd = new scala.util.Random(System.currentTimeMillis())
-    val r = rnd.nextInt(cands.length)
-    cands(r) 
-  }
 
-  /**
-    * Returns a number of synonyms for a given word as a vector of strings.
-    *
-    * @param word The word to find synonyms for.
-    * @param num How many synonyms are desired.
-    */
-  def getSynonyms(word: String, num: Int):Vector[String] = {
-    val cands = synonymMap(word)
-    cands.take(num).toVector
+object TwitterRegex {
+
+  // Recognize a follow command
+  lazy val FollowRE = """(?i)(?<=follow)(\s+(me|@[a-z_0-9]+))+""".r
+
+  // Pull just the lead mention from a tweet.
+  lazy val StripLeadMentionRE = """(?:)^@[a-z_0-9]+\s(.*)$""".r
+
+  // Pull the RT and mentions from the front of a tweet.
+  lazy val StripMentionsRE = """(?:)(?:RT\s)?(?:(?:@[A-Za-z]+\s))+(.*)$""".r   
+
+  def stripLeadMention(text: String) = text match {
+    case StripLeadMentionRE(withoutMention) => withoutMention
+    case x => x
   }
 
 }
