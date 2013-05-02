@@ -343,7 +343,7 @@ class SynonymStreamReplier extends BaseReplier {
     log.info("searched for: " + query)
 
     if (query == "") query = "Texas"
-    val futureStatuses = (context.parent ? SearchTwitter(new Query(query))).mapTo[Seq[Status]]
+    val futureStatuses = (context.parent ? SearchTwitterWithUser(new Query(query),status.getUser.getScreenName)).mapTo[Seq[Status]]
 
     var zero = false
     futureStatuses.foreach{x=> 

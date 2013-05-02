@@ -23,6 +23,7 @@ import tshrdlu.util.bridge._
 import tshrdlu.util.Polarity
 import sys.process._
 import tshrdlu.util._
+import collection.mutable.Map
 
 /**
  * An object to define the message types that the actors in the bot use for
@@ -42,7 +43,7 @@ object Bot {
   case class RegisterReplier(replier: ActorRef)
   case class ReplyToStatus(status: Status)
   case class SearchTwitter(query: Query)
-  case class SearchTwitterStatus(query: Query, status: Status)
+  case class SearchTwitterWithUser(query: Query, user: String)
   case class UpdateStatus(update: StatusUpdate)
 
   def main (args: Array[String]) {
@@ -75,10 +76,9 @@ class Bot extends Actor with ActorLogging {
   val username = new TwitterStreamFactory().getInstance.getScreenName
   val streamer = new Streamer(context.self)
 
-  var mood = 0.0
+  var userMood = collection.mutable.Map(""->0.0)
   var weatherCode = -1
-  var posCount = 1
-  var negCount = 1
+  var weatherMood = 0.0
 
   val twitter = new TwitterFactory().getInstance
   val replierManager = context.actorOf(Props[ReplierManager], name = "ReplierManager")
@@ -108,43 +108,27 @@ class Bot extends Actor with ActorLogging {
 
     case SearchTwitter(query) => 
       val tweets: Seq[Status] = twitter.search(query).getTweets.toSeq
-      val filteredTweets = filterTweetsByMood(tweets)
-      log.info("Length Of Filtered Tweets: "+filteredTweets.length)
+      sender ! tweets
 
-
-      if (filteredTweets.length < 1) {
-        log.info("Getting More Tweets...")
-        val tweets2: Seq[Status] = twitter.search(query).getTweets.toSeq
-        val filteredTweets2 = filterTweetsByMood(tweets)
-
-        val totalTweets = filteredTweets ++ filteredTweets2
-        if (totalTweets.length == 0) {
-          log.info("No tweets with correct mood, defaulting to original")
-          sender ! tweets
-        } else {
-          sender ! totalTweets
-        }
-      } else {
-        sender ! filteredTweets
-      }
-
-    case SearchTwitterStatus(query,status) => 
-      log.info("Searching With Location...")
-      log.info("Is GeoEnabled?: ",status.getUser.isGeoEnabled())
-
-      val lat = status.getGeoLocation.getLatitude
-      val long = status.getGeoLocation.getLongitude
-      log.info("Lat:"+lat+" Long:"+long)
+    case SearchTwitterWithUser(query,user) => 
+      log.info("Searching With User in Mind... ("+user+")")
 
       val tweets: Seq[Status] = twitter.search(query).getTweets.toSeq
-      val filteredTweets = filterTweetsByMood(tweets)
-      log.info("Length Of Filtered Tweets: "+filteredTweets.length)
 
+      val curMood = if (userMood.contains(user)) {
+                      userMood(user)
+                    } else {
+                      userMood += user -> weatherMood
+                      weatherMood
+                    }
+
+      val filteredTweets = filterTweetsByMood(tweets,curMood)
+      log.info("Length Of Filtered Tweets: "+filteredTweets.length)
 
       if (filteredTweets.length < 2) {
         log.info("Getting More Tweets...")
         val tweets2: Seq[Status] = twitter.search(query).getTweets.toSeq
-        val filteredTweets2 = filterTweetsByMood(tweets)
+        val filteredTweets2 = filterTweetsByMood(tweets,curMood)
 
         val totalTweets = filteredTweets ++ filteredTweets2
         if (totalTweets.length == 0) {
@@ -163,6 +147,13 @@ class Bot extends Actor with ActorLogging {
 
     case status: Status =>
       log.info("New status: " + status.getText)
+
+      val tweeter = status.getUser.getScreenName
+
+      if (!userMood.contains(tweeter)) {
+        userMood += tweeter -> weatherMood
+      }
+
       val replyName = status.getInReplyToScreenName
       if (replyName == username) {
 
@@ -170,11 +161,11 @@ class Bot extends Actor with ActorLogging {
           val text = status.getText
           val moodTarget = text.takeRight(1).toInt
           if (text.takeRight(2).startsWith("1")) {
-            mood = 1.0
+            userMood = userMood.map(x => (x._1,1.0))
           } else {
-            mood = moodTarget.toDouble/10
+            userMood = userMood.map(x => (x._1,moodTarget.toDouble/10))
           }
-          log.info("New Mood: "+mood)
+          log.info("Global Mood Changed")
         } else {
           log.info("Replying to: " + status.getText)
           replierManager ! ReplyToStatus(status)
@@ -190,8 +181,8 @@ class Bot extends Actor with ActorLogging {
 
           log.info("Polarity of Incoming Tweet: "+(pos.toDouble/(all)).toString)
           val moodUpdate = pos.toDouble/(all)
-          if (all > 2) mood = (0.2*moodUpdate) + (0.8*mood)
-          log.info("Current Mood: "+mood)
+          if (all > 2) userMood(tweeter) = (0.2*moodUpdate) + (0.8*userMood(tweeter))
+          log.info("Current Mood For "+tweeter+": "+userMood(tweeter))
         }
       }
 
@@ -203,20 +194,20 @@ class Bot extends Actor with ActorLogging {
       val code = weatherJson.slice(idx+16,idx+19).toInt
       weatherCode = code
       if(code == 800){
-        mood = 0.9
+        weatherMood = 0.9
       } else if (code > 802){
-        mood = 0.5
+        weatherMood = 0.5
       } else if (code < 700){
-        mood = 0.1
+        weatherMood = 0.1
       }
       replierManager ! SetWeather(code)
-      log.info("Checked Weather - New Mood: "+mood)
+      log.info("Checked Weather - New Weather Mood: "+weatherMood)
   }
 
   /**
   * Filters out tweets that do not correspond the bot's current mood.
   */
-  def filterTweetsByMood(tweets: Seq[Status]): Seq[Status] = {
+  def filterTweetsByMood(tweets: Seq[Status], mood: Double): Seq[Status] = {
     tweets.filter{ tweet =>
       val pos = SimpleTokenizer(tweet.getText)
                       .filter{ word => Polarity.posWords(word.toLowerCase) }
@@ -241,7 +232,6 @@ class Bot extends Actor with ActorLogging {
 
 }
   
-
 
 class ReplierManager extends Actor with ActorLogging {
   import Bot._
@@ -319,7 +309,6 @@ class ReplierManager extends Actor with ActorLogging {
   }
 }
 
-
 // The Sampler collects possible responses. Does not implement a
 // filter for bot requests, so it should be connected to the sample
 // stream. Batches tweets together using the collector so we don't
@@ -343,8 +332,6 @@ class Sampler extends Actor with ActorLogging {
   }
 }
 
-
-
 // Collects until it reaches 100 and then sends them back to the
 // sender and the cycle begins anew.
 class Collector extends Actor with ActorLogging {
@@ -360,8 +347,6 @@ class Collector extends Actor with ActorLogging {
     }
   }
 }
-
-
 
 // The LuceneWriter actor extracts the content of each tweet, removes
 // the RT and mentions from the front and selects only tweets
@@ -388,7 +373,6 @@ class LuceneWriter extends Actor with ActorLogging {
     }
   }
 }
-
 
 object TwitterRegex {
 
