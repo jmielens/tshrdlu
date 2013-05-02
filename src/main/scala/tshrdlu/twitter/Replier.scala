@@ -347,7 +347,7 @@ class SynonymStreamReplier extends BaseReplier {
 
     var zero = false
     futureStatuses.foreach{x=> 
-      log.info(x.length.toString)
+      //log.info(x.length.toString)
       if (x.length == 0) zero = true
     }
 

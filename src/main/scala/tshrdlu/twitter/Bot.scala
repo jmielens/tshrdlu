@@ -42,6 +42,7 @@ object Bot {
   case class RegisterReplier(replier: ActorRef)
   case class ReplyToStatus(status: Status)
   case class SearchTwitter(query: Query)
+  case class SearchTwitterStatus(query: Query, status: Status)
   case class UpdateStatus(update: StatusUpdate)
 
   def main (args: Array[String]) {
@@ -74,7 +75,7 @@ class Bot extends Actor with ActorLogging {
   val username = new TwitterStreamFactory().getInstance.getScreenName
   val streamer = new Streamer(context.self)
 
-  var mood = 0
+  var mood = 0.0
   var weatherCode = -1
   var posCount = 1
   var negCount = 1
@@ -91,13 +92,13 @@ class Bot extends Actor with ActorLogging {
   val weatherReplier = context.actorOf(Props[WeatherReplier], name = "WeatherReplier")
 
   override def preStart {
-    replierManager ! RegisterReplier(streamReplier)
-    replierManager ! RegisterReplier(synonymReplier)
+    //replierManager ! RegisterReplier(streamReplier)
+    //replierManager ! RegisterReplier(synonymReplier)
     replierManager ! RegisterReplier(synonymStreamReplier)
-    replierManager ! RegisterReplier(bigramReplier)
-    replierManager ! RegisterReplier(luceneReplier)
-    replierManager ! RegisterReplier(topicModelReplier)
-    replierManager ! RegisterReplier(weatherReplier)
+    //replierManager ! RegisterReplier(bigramReplier)
+    //replierManager ! RegisterReplier(luceneReplier)
+    //replierManager ! RegisterReplier(topicModelReplier)
+    //replierManager ! RegisterReplier(weatherReplier)
   }
 
   def receive = {
@@ -106,6 +107,35 @@ class Bot extends Actor with ActorLogging {
     case Shutdown => streamer.stream.shutdown
 
     case SearchTwitter(query) => 
+      val tweets: Seq[Status] = twitter.search(query).getTweets.toSeq
+      val filteredTweets = filterTweetsByMood(tweets)
+      log.info("Length Of Filtered Tweets: "+filteredTweets.length)
+
+
+      if (filteredTweets.length < 1) {
+        log.info("Getting More Tweets...")
+        val tweets2: Seq[Status] = twitter.search(query).getTweets.toSeq
+        val filteredTweets2 = filterTweetsByMood(tweets)
+
+        val totalTweets = filteredTweets ++ filteredTweets2
+        if (totalTweets.length == 0) {
+          log.info("No tweets with correct mood, defaulting to original")
+          sender ! tweets
+        } else {
+          sender ! totalTweets
+        }
+      } else {
+        sender ! filteredTweets
+      }
+
+    case SearchTwitterStatus(query,status) => 
+      log.info("Searching With Location...")
+      log.info("Is GeoEnabled?: ",status.getUser.isGeoEnabled())
+
+      val lat = status.getGeoLocation.getLatitude
+      val long = status.getGeoLocation.getLongitude
+      log.info("Lat:"+lat+" Long:"+long)
+
       val tweets: Seq[Status] = twitter.search(query).getTweets.toSeq
       val filteredTweets = filterTweetsByMood(tweets)
       log.info("Length Of Filtered Tweets: "+filteredTweets.length)
@@ -135,22 +165,34 @@ class Bot extends Actor with ActorLogging {
       log.info("New status: " + status.getText)
       val replyName = status.getInReplyToScreenName
       if (replyName == username) {
-        log.info("Replying to: " + status.getText)
-        replierManager ! ReplyToStatus(status)
 
-        val pos = SimpleTokenizer(status.getText)
-                      .filter{ word => Polarity.posWords(word.toLowerCase) }
-                      .length 
-        val neg = SimpleTokenizer(status.getText)
-                      .filter{ word => Polarity.negWords(word.toLowerCase) }
-                      .length
-        posCount += pos
-        negCount += neg
-        log.info("Polarity of Incoming Tweet: "+(pos-neg).toString)
-        val moodUpdate = posCount.toDouble / (posCount+negCount)
-        val newMood = Math.round(moodUpdate*7)-4
-        mood = Math.round((newMood + (2*mood))/2)
-        log.info("Current Mood: "+mood)
+        if (status.getText.contains("Set Mood:")) {
+          val text = status.getText
+          val moodTarget = text.takeRight(1).toInt
+          if (text.takeRight(2).startsWith("1")) {
+            mood = 1.0
+          } else {
+            mood = moodTarget.toDouble/10
+          }
+          log.info("New Mood: "+mood)
+        } else {
+          log.info("Replying to: " + status.getText)
+          replierManager ! ReplyToStatus(status)
+
+          val pos = SimpleTokenizer(status.getText)
+                        .filter{ word => Polarity.posWords(word.toLowerCase) }
+                        .length 
+          val neg = SimpleTokenizer(status.getText)
+                        .filter{ word => Polarity.negWords(word.toLowerCase) }
+                        .length
+
+          val all = pos+neg+0.001
+
+          log.info("Polarity of Incoming Tweet: "+(pos.toDouble/(all)).toString)
+          val moodUpdate = pos.toDouble/(all)
+          if (all > 2) mood = (0.2*moodUpdate) + (0.8*mood)
+          log.info("Current Mood: "+mood)
+        }
       }
 
 
@@ -161,11 +203,11 @@ class Bot extends Actor with ActorLogging {
       val code = weatherJson.slice(idx+16,idx+19).toInt
       weatherCode = code
       if(code == 800){
-        mood = 3
+        mood = 0.9
       } else if (code > 802){
-        mood = -1
+        mood = 0.5
       } else if (code < 700){
-        mood = -3;
+        mood = 0.1
       }
       replierManager ! SetWeather(code)
       log.info("Checked Weather - New Mood: "+mood)
@@ -183,14 +225,13 @@ class Bot extends Actor with ActorLogging {
                       .filter{ word => Polarity.negWords(word.toLowerCase) }
                       .length 
 
-      val tweetMood = pos-neg
-      if (mood == 3) { // If bot is very positive, accept unlimited positivity
-        tweetMood > 3
-      } else if (mood == -3) { // If bot is negative, accept unlimited negativity
-        tweetMood < -3
-      } else {
-        (tweetMood-1 <= mood) && (mood <= tweetMood+1)
-      }
+      val all = pos + neg + 0.001
+
+      val tweetMood = pos/all
+    
+      // Filter Function
+      (tweetMood-0.2 <= mood) && (mood <= tweetMood+0.2) && (all > 1.1)
+      
     }
   }
 
