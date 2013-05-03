@@ -203,10 +203,10 @@ class Bot extends Actor with ActorLogging {
           val newPosWords = Polarity.posWords ++ opinions.filter(x=>x._2 >= 0.5).keys.toSet
           val newNegWords = Polarity.negWords ++ opinions.filter(x=>x._2 < 0.5).keys.toSet
           val pos = SimpleTokenizer(status.getText)
-                        .filter{ word => newPosWords(word.toLowerCase) }
+                        .filter{ word => newPosWords.map(x => x.startsWith(word.toLowerCase).contains(true))}
                         .length 
           val neg = SimpleTokenizer(status.getText)
-                        .filter{ word => newNegWords(word.toLowerCase) }
+                        .filter{ word => newNegWords.map(x => x.startsWith(word.toLowerCase).contains(true)) }
                         .length
 
           val all = pos+neg+0.001
@@ -244,10 +244,10 @@ class Bot extends Actor with ActorLogging {
       val newPosWords = Polarity.posWords ++ opinions.filter(x=>x._2 >= 0.5).keys.toSet
       val newNegWords = Polarity.negWords ++ opinions.filter(x=>x._2 < 0.5).keys.toSet
       val pos = SimpleTokenizer(tweet.getText)
-                      .filter{ word => newPosWords(word.toLowerCase) }
+                      .filter{ word => newPosWords.map(x => x.startsWith(word.toLowerCase).contains(true)) }
                       .length 
       val neg = SimpleTokenizer(tweet.getText)
-                      .filter{ word => newNegWords(word.toLowerCase) }
+                      .filter{ word => newNegWords.map(x => x.startsWith(word.toLowerCase).contains(true)) }
                       .length 
 
       val all = pos + neg + 0.001
