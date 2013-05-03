@@ -288,8 +288,8 @@ abstract class OtherLexica (code: String) {
 }
 
 class Polarity extends OtherLexica("eng") {
-  lazy val posWords = getLexicon("positive-words.txt.gz")
-  lazy val negWords = getLexicon("negative-words.txt.gz")
+  lazy val posWords = getLexicon("positive_words.txt.gz")
+  lazy val negWords = getLexicon("negative_words.txt.gz")
 }
 
 object Polarity extends Polarity

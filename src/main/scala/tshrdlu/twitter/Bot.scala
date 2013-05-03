@@ -134,6 +134,25 @@ class Bot extends Actor with ActorLogging {
       
     case UpdateStatus(update) => 
       log.info("Posting update: " + update.getStatus)
+            ///////////////////////////////////////////////////////////
+            val toks = SimpleTokenizer(update.getStatus)
+            toks.foreach{word =>
+              if (Polarity.posWords.map{x => 
+                                                  if (x.endsWith("*"))
+                                                    word.toLowerCase.startsWith(x.dropRight(1))
+                                                  else
+                                                    x == word.toLowerCase
+                                                }.contains(true)) print(Console.BLUE + word +" "+ Console.RESET)
+              else if (Polarity.negWords.map{x => 
+                                                  if (x.endsWith("*"))
+                                                    word.toLowerCase.startsWith(x.dropRight(1))
+                                                  else
+                                                    x == word.toLowerCase
+                                                }.contains(true)) print(Console.RED + word +" "+ Console.RESET)
+              else print(Console.WHITE + word +" "+ Console.RESET)
+            }
+            println()
+          /////////////////////////////////////////////////////////////
       twitter.updateStatus(update)
 
     case status: Status =>
@@ -162,25 +181,28 @@ class Bot extends Actor with ActorLogging {
           log.info("Forming Opinion About: "+opinionItem)
 
           //Search for opinionitem.
-          val opinionTweets = twitter.search(new Query(opinionItem).count(100).lang("en")).getTweets.toSeq
-          val opinionSentiment = opinionTweets.map{tweet =>
-            val pos = SimpleTokenizer(tweet.getText)
-                          .filter{ word => Polarity.posWords(word.toLowerCase) }
-                          .length 
-            val neg = SimpleTokenizer(tweet.getText)
-                          .filter{ word => Polarity.negWords(word.toLowerCase) }
-                          .length
-            val all = pos+neg+0.001
-            if ( all < 1.1 ) 512.0 else (pos.toDouble/(all))
-          }
-          val opinion = (opinionSentiment.filterNot(x=>x==512.0).sum / opinionSentiment.filterNot(x=>x==512.0).length)+0.1
+          val opinionTweets = twitter.search(new Query(opinionItem+"+exclude:retweets").count(100).lang("en")).getTweets.toSeq
+
+          val megaTweet = opinionTweets.map(tweet=>tweet.getText).mkString(" ")
+
+          val opinion = sentiment_calc(megaTweet)
 
           ///////////////////////////////////////////////////////////
           opinionTweets.foreach{tweet =>
             val toks = SimpleTokenizer(tweet.getText)
             toks.foreach{word =>
-              if (Polarity.posWords(word.toLowerCase)) print(Console.BLUE + word +" "+ Console.RESET)
-              else if (Polarity.negWords(word.toLowerCase)) print(Console.RED + word +" "+ Console.RESET)
+              if (Polarity.posWords.map{x => 
+                                                  if (x.endsWith("*"))
+                                                    word.toLowerCase.startsWith(x.dropRight(1))
+                                                  else
+                                                    x == word.toLowerCase
+                                                }.contains(true)) print(Console.BLUE + word +" "+ Console.RESET)
+              else if (Polarity.negWords.map{x => 
+                                                  if (x.endsWith("*"))
+                                                    word.toLowerCase.startsWith(x.dropRight(1))
+                                                  else
+                                                    x == word.toLowerCase
+                                                }.contains(true)) print(Console.RED + word +" "+ Console.RESET)
               else print(Console.WHITE + word +" "+ Console.RESET)
             }
             println()
@@ -200,20 +222,11 @@ class Bot extends Actor with ActorLogging {
           log.info("Replying to: " + status.getText)
           replierManager ! ReplyToStatus(status)
 
-          val newPosWords = Polarity.posWords ++ opinions.filter(x=>x._2 >= 0.5).keys.toSet
-          val newNegWords = Polarity.negWords ++ opinions.filter(x=>x._2 < 0.5).keys.toSet
-          val pos = SimpleTokenizer(status.getText)
-                        .filter{ word => newPosWords.map(x => x.startsWith(word.toLowerCase).contains(true))}
-                        .length 
-          val neg = SimpleTokenizer(status.getText)
-                        .filter{ word => newNegWords.map(x => x.startsWith(word.toLowerCase).contains(true)) }
-                        .length
+          val (moodUpdate,sentCount) = sentiment_calc(status.getText,true)
 
-          val all = pos+neg+0.001
+          log.info("Polarity of Incoming Tweet: "+moodUpdate+" Sentiment Words In Tweet: "+sentCount)
 
-          log.info("Polarity of Incoming Tweet: "+(pos.toDouble/(all)).toString)
-          val moodUpdate = pos.toDouble/(all)
-          if (all > 2) userMood(tweeter) = (0.2*moodUpdate) + (0.8*userMood(tweeter))
+          if (sentCount > 1) userMood(tweeter) = (0.2*moodUpdate) + (0.8*userMood(tweeter))
           log.info("Current Mood For "+tweeter+": "+userMood(tweeter))
         }
       }
@@ -241,27 +254,62 @@ class Bot extends Actor with ActorLogging {
   */
   def filterTweetsByMood(tweets: Seq[Status], mood: Double): Seq[Status] = {
     tweets.filter{ tweet =>
-      val newPosWords = Polarity.posWords ++ opinions.filter(x=>x._2 >= 0.5).keys.toSet
-      val newNegWords = Polarity.negWords ++ opinions.filter(x=>x._2 < 0.5).keys.toSet
-      val pos = SimpleTokenizer(tweet.getText)
-                      .filter{ word => newPosWords.map(x => x.startsWith(word.toLowerCase).contains(true)) }
-                      .length 
-      val neg = SimpleTokenizer(tweet.getText)
-                      .filter{ word => newNegWords.map(x => x.startsWith(word.toLowerCase).contains(true)) }
-                      .length 
-
-      val all = pos + neg + 0.001
-
-      val tweetMood = pos/all
-    
+      val (tweetMood,all) = sentiment_calc(tweet.getText, true)
       // Filter Function
       (tweetMood-0.2 <= mood) && (mood <= tweetMood+0.2) && (all > 1.1)
-      
     }
   }
 
   def onStatus(status: Status) {
     
+  }
+
+  def sentiment_calc(tweet: String):Double = {
+    val newPosWords = Polarity.posWords ++ opinions.filter(x=>x._2 >= 0.5).keys.toSet
+    val newNegWords = Polarity.negWords ++ opinions.filter(x=>x._2 < 0.5).keys.toSet
+    val pos = SimpleTokenizer(tweet)
+                    .filter{ word => newPosWords.map{x => 
+                                                  if (x.endsWith("*"))
+                                                    word.toLowerCase.startsWith(x.dropRight(1))
+                                                  else
+                                                    x == word.toLowerCase
+                                                }.contains(true) }
+                    .length 
+    val neg = SimpleTokenizer(tweet)
+                    .filter{ word => newNegWords.map{x => 
+                                                  if (x.endsWith("*"))
+                                                    word.toLowerCase.startsWith(x.dropRight(1))
+                                                  else
+                                                    x == word.toLowerCase
+                                                }.contains(true) }
+                    .length 
+
+    val all = pos + neg + 0.001
+    pos/all
+  }
+
+  def sentiment_calc(tweet: String, allFlag: Boolean):(Double,Double) = {
+    val newPosWords = Polarity.posWords ++ opinions.filter(x=>x._2 >= 0.5).keys.toSet
+    val newNegWords = Polarity.negWords ++ opinions.filter(x=>x._2 < 0.5).keys.toSet
+    val pos = SimpleTokenizer(tweet)
+                    .filter{ word => newPosWords.map{x => 
+                                                  if (x.endsWith("*"))
+                                                    x.startsWith(word.toLowerCase)
+                                                  else
+                                                    x == word.toLowerCase
+                                                }.contains(true) }
+                    .length 
+    val neg = SimpleTokenizer(tweet)
+                    .filter{ word => newNegWords.map{x => 
+                                                  if (x.endsWith("*"))
+                                                    x.startsWith(word.toLowerCase)
+                                                  else
+                                                    x == word.toLowerCase
+                                                }.contains(true) }
+                    .length 
+
+    val all = pos + neg + 0.001
+    (pos/all,all)
   }
 
 }
