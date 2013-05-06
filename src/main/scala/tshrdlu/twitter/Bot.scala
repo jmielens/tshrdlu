@@ -54,6 +54,7 @@ object Bot {
     bot ! Start
 
     // Check the weather every hour
+    // TODO: Do this better with Akka...
     while(1==1) {
       bot ! CheckWeather
       Thread.sleep(3600000)
@@ -76,8 +77,14 @@ class Bot extends Actor with ActorLogging {
   val username = new TwitterStreamFactory().getInstance.getScreenName
   val streamer = new Streamer(context.self)
 
-  var userMood = collection.mutable.Map(""->0.0)
+  // Map that holds known users and the mood associated with them.
+  var userMood = collection.mutable.Map[String,Double]()
+
+  // Map that holds items the bot has opinions about, and the mood
+  // associated with them.
   var opinions = collection.mutable.Map[String,Double]()
+
+  // Weather Mood related variables.
   var weatherCode = -1
   var weatherMood = 0.0
 
@@ -111,11 +118,16 @@ class Bot extends Actor with ActorLogging {
       val tweets: Seq[Status] = twitter.search(query).getTweets.toSeq
       sender ! tweets
 
-    case SearchTwitterWithUser(query,user) => 
+    case SearchTwitterWithUser(query,user) =>
+      // Searches Twitter with a particular user in mind, so that the bot can
+      // get the right mood for that user.
       log.info("Searching With User in Mind... ("+user+")")
 
       val tweets: Seq[Status] = twitter.search(query.count(100)).getTweets.toSeq
 
+      // If we know this user, set the mood to search for accordingly, else set
+      // the mood to the default (the weather-based mood) and add the user to
+      // the list of known users.
       val curMood = if (userMood.contains(user)) {
                       userMood(user)
                     } else {
@@ -126,6 +138,9 @@ class Bot extends Actor with ActorLogging {
       val filteredTweets = filterTweetsByMood(tweets,curMood)
       log.info("Length Of Filtered Tweets: "+filteredTweets.length)
 
+      // If we couldn't find any correctly moody tweets, return the original
+      // unfiltered set.
+      // TODO: Query the offline corpus if online fails.
       if (filteredTweets.length == 0) {
         sender ! tweets
       } else {
@@ -134,26 +149,26 @@ class Bot extends Actor with ActorLogging {
       
     case UpdateStatus(update) => 
       log.info("Posting update: " + update.getStatus)
-            ///////////////////////////////////////////////////////////
-            val toks = SimpleTokenizer(update.getStatus)
-            toks.foreach{word =>
-              if (Polarity.posWords.map{x => 
-                                                  if (x.endsWith("*"))
-                                                    word.toLowerCase.startsWith(x.dropRight(1))
-                                                  else
-                                                    x == word.toLowerCase
-                                                }.contains(true)) print(Console.BLUE + word +" "+ Console.RESET)
-              else if (Polarity.negWords.map{x => 
-                                                  if (x.endsWith("*"))
-                                                    word.toLowerCase.startsWith(x.dropRight(1))
-                                                  else
-                                                    x == word.toLowerCase
-                                                }.contains(true)) print(Console.RED + word +" "+ Console.RESET)
-              else print(Console.WHITE + word +" "+ Console.RESET)
-            }
-            println()
-          /////////////////////////////////////////////////////////////
       twitter.updateStatus(update)
+      // The rest of this case code prints the tweet with color coded words
+      // Blue is positive, Red is negative, White is neutral.
+      val toks = SimpleTokenizer(update.getStatus)
+      toks.foreach{word =>
+        if (Polarity.posWords.map{x => 
+          if (x.endsWith("*"))
+            word.toLowerCase.startsWith(x.dropRight(1))
+          else
+            x == word.toLowerCase
+        }.contains(true)) print(Console.BLUE + word +" "+ Console.RESET)
+        else if (Polarity.negWords.map{x => 
+          if (x.endsWith("*"))
+            word.toLowerCase.startsWith(x.dropRight(1))
+          else
+            x == word.toLowerCase
+        }.contains(true)) print(Console.RED + word +" "+ Console.RESET)
+        else print(Console.WHITE + word +" "+ Console.RESET)
+      }
+      println()
 
     case status: Status =>
       log.info("New status: " + status.getText)
@@ -167,6 +182,7 @@ class Bot extends Actor with ActorLogging {
       val replyName = status.getInReplyToScreenName
       if (replyName == username) {
 
+        // Switch behavior to detect special commands such as mood setting or opinion forming
         if (status.getText.contains("Set Mood:")) {
           val text = status.getText
           val moodTarget = text.takeRight(1).toInt
@@ -180,38 +196,14 @@ class Bot extends Actor with ActorLogging {
           val opinionItem = status.getText.substring(status.getText.indexOf(":")+1).trim
           log.info("Forming Opinion About: "+opinionItem)
 
-          //Search for opinionitem.
+          // Search for query term, concatenate the tweets and find the sentiment of this 'document'
           val opinionTweets = twitter.search(new Query(opinionItem+"+exclude:retweets").count(100).lang("en")).getTweets.toSeq
-
           val megaTweet = opinionTweets.map(tweet=>tweet.getText).mkString(" ")
-
           val opinion = sentiment_calc(megaTweet)
-
-          ///////////////////////////////////////////////////////////
-          opinionTweets.foreach{tweet =>
-            val toks = SimpleTokenizer(tweet.getText)
-            toks.foreach{word =>
-              if (Polarity.posWords.map{x => 
-                                                  if (x.endsWith("*"))
-                                                    word.toLowerCase.startsWith(x.dropRight(1))
-                                                  else
-                                                    x == word.toLowerCase
-                                                }.contains(true)) print(Console.BLUE + word +" "+ Console.RESET)
-              else if (Polarity.negWords.map{x => 
-                                                  if (x.endsWith("*"))
-                                                    word.toLowerCase.startsWith(x.dropRight(1))
-                                                  else
-                                                    x == word.toLowerCase
-                                                }.contains(true)) print(Console.RED + word +" "+ Console.RESET)
-              else print(Console.WHITE + word +" "+ Console.RESET)
-            }
-            println()
-          }
-          /////////////////////////////////////////////////////////////
-
 
           log.info("Opinion Of "+opinionItem+": "+opinion)
 
+          // Update current opinion, or add new one
           if (opinions.contains(opinionItem)) {
             opinions(opinionItem) = opinion
           } else {
@@ -226,6 +218,8 @@ class Bot extends Actor with ActorLogging {
 
           log.info("Polarity of Incoming Tweet: "+moodUpdate+" Sentiment Words In Tweet: "+sentCount)
 
+          // Update the mood for a user if the tweet contains multiple sentiment words.
+          // Weight the previous mood to prevent quick radical changes.
           if (sentCount > 1) userMood(tweeter) = (0.2*moodUpdate) + (0.8*userMood(tweeter))
           log.info("Current Mood For "+tweeter+": "+userMood(tweeter))
         }
@@ -264,9 +258,16 @@ class Bot extends Actor with ActorLogging {
     
   }
 
+  /** Calculates the sentiment of a given string (a tweet or other document)
+    *
+    * @param tweet The string to calculate the sentiment of
+    * @return A value between 0.0 and 1.0, which is the positivity of the tweet
+    */
   def sentiment_calc(tweet: String):Double = {
+    // Add opinions to the static lexicons
     val newPosWords = Polarity.posWords ++ opinions.filter(x=>x._2 >= 0.5).keys.toSet
     val newNegWords = Polarity.negWords ++ opinions.filter(x=>x._2 < 0.5).keys.toSet
+
     val pos = SimpleTokenizer(tweet)
                     .filter{ word => newPosWords.map{x => 
                                                   if (x.endsWith("*"))
@@ -288,9 +289,21 @@ class Bot extends Actor with ActorLogging {
     pos/all
   }
 
+  /** Calculates the sentiment of a given string (a tweet or other document)
+    *
+    * @param tweet The string to calculate the sentiment of
+    * @param allFlag A flag the makes the function return the total count of 
+    *                sentimental words
+    * @return A tuple, where the first element is a value between 0.0 and 1.0, 
+    *         which is the positivity of the tweet, andthe second is the total
+    *         count of all sentiment words in the tweet.
+    */
   def sentiment_calc(tweet: String, allFlag: Boolean):(Double,Double) = {
+    // Add opinions to the static lexicons
     val newPosWords = Polarity.posWords ++ opinions.filter(x=>x._2 >= 0.5).keys.toSet
     val newNegWords = Polarity.negWords ++ opinions.filter(x=>x._2 < 0.5).keys.toSet
+
+    // Count the occurances of positive words...
     val pos = SimpleTokenizer(tweet)
                     .filter{ word => newPosWords.map{x => 
                                                   if (x.endsWith("*"))
@@ -299,6 +312,7 @@ class Bot extends Actor with ActorLogging {
                                                     x == word.toLowerCase
                                                 }.contains(true) }
                     .length 
+    // ... And negative words
     val neg = SimpleTokenizer(tweet)
                     .filter{ word => newNegWords.map{x => 
                                                   if (x.endsWith("*"))
@@ -308,6 +322,7 @@ class Bot extends Actor with ActorLogging {
                                                 }.contains(true) }
                     .length 
 
+    // Smooth and return
     val all = pos + neg + 0.001
     (pos/all,all)
   }

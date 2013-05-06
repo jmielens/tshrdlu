@@ -87,7 +87,7 @@ class WeatherReplier extends BaseReplier {
   def getReplies(status: Status, maxLength: Int = 140): Future[Seq[String]] = {
     log.info("Trying to do weather related search")
 
-    // Set query based on the current weather
+    // Set query based on the current weather code
     val query = if (weatherCode / 100 == 2) {
       "(storm OR thunder OR lightning)"
     } else if (weatherCode / 100 == 3) {
@@ -323,7 +323,7 @@ class SynonymStreamReplier extends BaseReplier {
 
 
   def getReplies(status: Status, maxLength: Int = 140): Future[Seq[String]] = {
-    log.info("Trying to do synonym search")
+    log.info("Trying to do synonym-based search")
     val text = stripLeadMention(status.getText).toLowerCase
 
     // Get two words from the tweet, and get up to 5 synonyms each (including the word itself).
@@ -342,17 +342,16 @@ class SynonymStreamReplier extends BaseReplier {
 
     log.info("searched for: " + query)
 
-    if (query == "") query = "Texas"
+    if (query == "") query = "Texas" // If synonym lookup failed, default to talking about Texas...
     val futureStatuses = (context.parent ? SearchTwitterWithUser(new Query(query),status.getUser.getScreenName)).mapTo[Seq[Status]]
 
     var zero = false
     futureStatuses.foreach{x=> 
-      //log.info(x.length.toString)
       if (x.length == 0) zero = true
     }
 
     if (zero) {
-      Future(Seq("Hmmmm..."))
+      Future(Seq("Hmmmm...")) // Always return something to prevent the weird non-posting bug...
     } else {
       futureStatuses.map(_.flatMap(getText).filter(_.length <= maxLength))
     }
