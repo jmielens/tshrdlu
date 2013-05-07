@@ -24,6 +24,9 @@ import tshrdlu.util.Polarity
 import sys.process._
 import tshrdlu.util._
 import collection.mutable.Map
+import java.io.{FileInputStream,BufferedInputStream}
+import org.apache.commons.compress.compressors.bzip2._
+
 
 /**
  * An object to define the message types that the actors in the bot use for
@@ -52,6 +55,21 @@ object Bot {
     sample ! Sample
     val bot = system.actorOf(Props[Bot], name = "Bot")
     bot ! Start
+
+
+    val fin = new FileInputStream("/scratch/01683/benwing/corpora/twitter-pull/originals/markov/spritzer.tweets.2012-09-13.0239.bz2")
+    val in = new BufferedInputStream(fin)
+    val bzIn = new BZip2CompressorInputStream(in)
+
+    val lines = io.Source.fromInputStream(bzIn).getLines
+
+    if (lines.hasNext) {
+      println(lines.next)
+    }
+
+    bzIn.close();
+
+
 
     // Check the weather every hour
     // TODO: Do this better with Akka...
