@@ -63,8 +63,14 @@ object Bot {
 
     val lines = io.Source.fromInputStream(bzIn).getLines
 
-    if (lines.hasNext) {
-      println(lines.next)
+    val count = 0
+    while (count < 50) {
+      val tweetJson = lines.next
+
+      val tweet = twitter4j.json.DataObjectFactory.createStatus(tweetJson)
+
+      println(tweet.getText)
+      count += 1
     }
 
     bzIn.close();
