@@ -26,6 +26,15 @@ import tshrdlu.util._
 import collection.mutable.Map
 import java.io.{FileInputStream,BufferedInputStream}
 import org.apache.commons.compress.compressors.bzip2._
+import org.apache.lucene.document._
+import org.apache.lucene.index._
+import org.apache.lucene.queryparser.classic.QueryParser
+import org.apache.lucene.search._
+import org.apache.lucene.store._
+import org.apache.lucene.analysis.en._
+import org.apache.lucene.util.Version
+import twitter4j.Status
+import scala.collection.JavaConversions._
 
 
 /**
@@ -45,8 +54,8 @@ object Bot {
   case class MonitorUserStream(listen: Boolean)
   case class RegisterReplier(replier: ActorRef)
   case class ReplyToStatus(status: Status)
-  case class SearchTwitter(query: Query)
-  case class SearchTwitterWithUser(query: Query, user: String)
+  case class SearchTwitter(query: twitter4j.Query)
+  case class SearchTwitterWithUser(query: twitter4j.Query, user: String)
   case class UpdateStatus(update: StatusUpdate)
 
   def main (args: Array[String]) {
@@ -57,26 +66,22 @@ object Bot {
     bot ! Start
 
 
-    val fin = new FileInputStream("/scratch/01683/benwing/corpora/twitter-pull/originals/markov/spritzer.tweets.2012-09-13.0239.bz2")
-    val in = new BufferedInputStream(fin)
-    val bzIn = new BZip2CompressorInputStream(in)
+    val index = FSDirectory.open(new java.io.File("lucene"))
+    val analyzer = new EnglishAnalyzer(Version.LUCENE_41)
+    val config = new IndexWriterConfig(Version.LUCENE_41, analyzer)
+    val parser = new QueryParser(Version.LUCENE_41, "text", analyzer)
 
-    val lines = io.Source.fromInputStream(bzIn).getLines
-
-    val count = 0
-    while (count < 50) {
-      val tweetJson = lines.next
-
-      val tweet = twitter4j.json.DataObjectFactory.createStatus(tweetJson)
-
-      println(tweet.getText)
-      count += 1
+    def read(query: String): Seq[String] = {
+      val reader = DirectoryReader.open(index)
+      val searcher = new IndexSearcher(reader)
+      val collector = TopScoreDocCollector.create(5, true)
+      searcher.search(parser.parse(query), collector)
+      collector.topDocs().scoreDocs.toSeq.map(_.doc).map(searcher.doc(_).get("text"))
     }
 
-    bzIn.close();
+    read("cows").foreach(println)
 
-
-
+ 
     // Check the weather every hour
     // TODO: Do this better with Akka...
     while(1==1) {
@@ -221,7 +226,7 @@ class Bot extends Actor with ActorLogging {
           log.info("Forming Opinion About: "+opinionItem)
 
           // Search for query term, concatenate the tweets and find the sentiment of this 'document'
-          val opinionTweets = twitter.search(new Query(opinionItem+"+exclude:retweets").count(100).lang("en")).getTweets.toSeq
+          val opinionTweets = twitter.search(new twitter4j.Query(opinionItem+"+exclude:retweets").count(100).lang("en")).getTweets.toSeq
           val megaTweet = opinionTweets.map(tweet=>tweet.getText).mkString(" ")
           val opinion = sentiment_calc(megaTweet)
 
