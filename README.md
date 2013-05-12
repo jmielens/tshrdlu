@@ -1,17 +1,33 @@
-# tshrdlu
+# tshrdlu -- MOODY Modifications
 =======
 
-Author: **Jason Baldridge** (jasonbaldridge@gmail.com)
+Authors: **Jim Evans** (jimevans87@gmail.com), **Jason Mielens** (jmielens@utexas.edu)
+Original tshrdlu Author: **Jason Baldridge** (jasonbaldridge@gmail.com)
 
-This is a parent repository for [project](https://github.com/utcompling/applied-nlp/wiki/Course-Project) related code for [Applied NLP course](https://github.com/utcompling/applied-nlp/wiki) being taught by [Jason Baldridge](http://www.jasonbaldridge.com) at [UT Austin](http://www.utexas.edu). This involves creating applications that use Twitter streams and can take automated actions as Twitter users, using natural language processing and machine learning.
 
-The name "tshrdlu" comes from Twitter+[SHRDLU](http://en.wikipedia.org/wiki/SHRDLU).
-
-For more information, updates, etc., follow [@appliednlp](https://twitter.com/appliednlp) on Twitter. The [@tshrdlu](https://twitter.com/tshrdlu) account is now doing some tweeting of its own (by which I mean automated tweeting, based on the code in this repository).
+This is a repository for the Twitter bot "MOODY", which is our [final project](https://github.com/utcompling/applied-nlp/wiki/Course-Project) code for the [Applied NLP course](https://github.com/utcompling/applied-nlp/wiki) taught by [Jason Baldridge](http://www.jasonbaldridge.com) at [UT Austin](http://www.utexas.edu).
 
 ## Requirements
 
 * Version 1.6 of the Java 2 SDK (http://java.sun.com)
+* Sentiment Lexicons, either LIWC or others. See the following section for details.
+
+## Sentiment Lexicons
+
+MOODY uses sentiment lexicons derived from [LIWC](http://www.liwc.net/) dictionaries. These are lexicons are not freely available, but if you have access to them, you can recreate our exact lexicons by taking the following steps.
+
+* From the raw LIWC lexicon, extract words tagged as positive emotion words (posemo) into a file `positive_words.txt.gz` with one word per line.
+* Extract the words tagged as anger words (anger) into `angry.txt.gz`
+* Extract sad words (sad) into `sad.txt.gz`
+* Place these files into the `/src/main/resources/lang/eng/lexicon/` directory.
+
+If you do not have access to the LIWC dictionary, feel free to use any other sentiment lexicon that you do have available, and follow the format above. Note that on a sentiment word, MOODY supports a trailing `*` that acts as a wildcard. For instance, if `sad*` is in a sentiment lexicon, it will match `sadness` as well as `saddest`. 
+
+## Using Offline Corpora
+
+MOODY can make use of an offline corpus of Tweets in order to save on Twitter API hits. We have created a Lucene index of tweets suitable for this purpose that currently sits on the Longhorn cluster at the Texas Advanced Computing Center (TACC).
+
+Provided you are in the correct permissions group, the current codebase will access this index if it is run from Longhorn. If you wish to create a new index, you will have to use `tshrdlu.util.LuceneIndexer` to do so. This will require modifying `src/main/scala/tshrdlu/util/LuceneIndexer.scala` to specify the location and format of your tweets. Contact the authors for assistance.
 
 ## Configuring your environment variables
 
@@ -66,6 +82,6 @@ also just call it directly with "sbt" in `TSHRDLU_DIR`.
 
 # Questions or suggestions?
 
-Email Jason Baldridge: <jasonbaldridge@gmail.com>
+Email The Authors: <jimevans87@gmail.com>,<jmielens@utexas.edu>
 
-Or, create an issue: <https://github.com/utcompling/tshrdlu/issues>
+Or, create an issue: <https://github.com/jmielens/tshrdlu/issues>
