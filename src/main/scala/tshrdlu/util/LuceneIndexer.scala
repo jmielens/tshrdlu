@@ -13,7 +13,7 @@ import java.io.{FileInputStream,BufferedInputStream}
 import org.apache.commons.compress.compressors.bzip2._
 
 object LuceneIndexer {
-  val index = new SimpleFSDirectory(new java.io.File("lucene"))
+  val index = new SimpleFSDirectory(new java.io.File("lucene-tweets"))
   val analyzer = new EnglishAnalyzer(Version.LUCENE_41)
   val config = new IndexWriterConfig(Version.LUCENE_41, analyzer)
   val writer = new IndexWriter(index, config)
@@ -30,20 +30,28 @@ object LuceneIndexer {
   }
 
   def main(args: Array[String]) {
-    val fin = new FileInputStream("/scratch/01683/benwing/corpora/twitter-pull/originals/markov/spritzer.tweets.2012-09-13.0239.bz2")
-    val in = new BufferedInputStream(fin)
-    val bzIn = new BZip2CompressorInputStream(in)
 
-    val lines = io.Source.fromInputStream(bzIn).getLines
+   println("Indexing Tweets...")
+
+    val fileNames = List("/scratch/01683/benwing/corpora/twitter-pull/originals/markov/global2.tweets.2012-07-20.1630.bz2","/scratch/01683/benwing/corpora/twitter-pull/originals/markov/global2.tweets.2012-07-21.1630.bz2")
+
+    val fins = fileNames.map(file => new FileInputStream(file))
+    val ins = fins.map(fin => new BufferedInputStream(fin))
+
+    println("Building BZip Input Streams...")
+    val bzIns = ins.map(in => new BZip2CompressorInputStream(in))
+    println("Mapping to Lines...")
+    val linesIterators = bzIns.map(bzIn => io.Source.fromInputStream(bzIn).getLines)
+    println("Reducing...")
+    val lines = linesIterators.reduce(_++_)
 
     var count = 0
     while (lines.hasNext) {
       val tweetJson = lines.next
 
       if (!tweetJson.startsWith("{\"delete")) {
-        val tweet = twitter4j.json.DataObjectFactory.createStatus(tweetJson)
-       if (count % 1000 == 0) println(tweet.getText)
-        write(List(tweet.getText))
+        if (count % 100 == 0) println("Processed " + count + " Tweets")
+        write(List(tweetJson))
       }
 
       count += 1
