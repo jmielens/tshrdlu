@@ -192,6 +192,11 @@ class Bot extends Actor with ActorLogging {
         // Switch behavior to detect special commands, else just generate a reply
         if (status.getText.contains("getOpinion:")) {
           formOpinion(status.getText.substring(status.getText.indexOf(":")+1).trim)
+        } else if (status.getText.contains("setMood:")) {
+          if (status.getText.contains("sad")) userMood(tweeter) = new Mood(0.0,0.0,1.0)
+          else if (status.getText.contains("angry")) userMood(tweeter) = new Mood(0.0,1.0,0.0)
+          else userMood(tweeter) = new Mood(1.0,0.0,0.0)
+          log.info("Set Mood For "+tweeter+":"+userMood(tweeter))
         } else {
           log.info("Replying to: " + status.getText)
           replierManager ! ReplyToStatus(status)
