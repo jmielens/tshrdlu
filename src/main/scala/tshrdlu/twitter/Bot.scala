@@ -66,7 +66,7 @@ object Bot {
     bot ! Start
  
     // Check the weather every hour
-    // TODO: Do this better with Akka...
+    // TODO: Do this smarter with Akka...
     while(1==1) {
       bot ! CheckWeather
       Thread.sleep(3600000)
@@ -191,12 +191,11 @@ class Bot extends Actor with ActorLogging {
       if (replyName == username) {
         // Switch behavior to detect special commands, else just generate a reply
         if (status.getText.contains("getOpinion:")) {
+          // Form an opinion about some item...
           formOpinion(status.getText.substring(status.getText.indexOf(":")+1).trim)
         } else if (status.getText.contains("setMood:")) {
-          if (status.getText.contains("sad")) userMood(tweeter) = new Mood(0.0,0.0,1.0)
-          else if (status.getText.contains("angry")) userMood(tweeter) = new Mood(0.0,1.0,0.0)
-          else userMood(tweeter) = new Mood(1.0,0.0,0.0)
-          log.info("Set Mood For "+tweeter+":"+userMood(tweeter))
+          // Set the mood for a given user (used for debugging)...
+          setMood(status.getText, tweeter)
         } else {
           log.info("Replying to: " + status.getText)
           replierManager ! ReplyToStatus(status)
@@ -234,9 +233,11 @@ class Bot extends Actor with ActorLogging {
       log.info("Checked Weather ("+weatherCode+") - New Weather Mood: "+weatherMood)
   }
 
-  /**
-  * Filters out tweets that do not correspond the bot's current mood toward a user.
-  */
+  /** Filters out tweets that do not correspond the bot's current mood toward a user.
+   * @param tweets A sequence of Twitter Status objects that are unfiltered.
+   * @param curMood The mood to filter the Statuses by.
+   * @return The filtered list of statuses that display the correct mood
+   */
   def filterTweetsByMood(tweets: Seq[Status], curMood: Mood): Seq[Status] = {
     tweets.filter{ tweet =>
       val (pos,angry,sad,all) = sentiment_calc(tweet.getText, true)
@@ -252,11 +253,20 @@ class Bot extends Actor with ActorLogging {
     }
   }
 
+  /** Calculates the distance of a given Coordinate from Austin.
+   *
+   * @param coord A tuple of type (Double,Double), which contains the latitude and longitude
+   *              of the coordinate to measure the distance from Austin of.
+   * @return The distance (not in any paticular units) of coord from Austin.
+   */
   def distance_from_austin(coord: Tuple2[Double,Double]):Double = {
     Math.sqrt(Math.pow(Math.abs(30.285051-coord._1),2) + Math.pow(Math.abs(-97.735518-coord._2),2))
   }
-
   
+  /** Lucene Index Reader for offline geotagged tweets
+   * @param query The query string to seach the index for.
+   * @return A sequence of Statuses that match the query.
+   */
   def read(query: String): Seq[Status] = {
     val reader = DirectoryReader.open(index)
     val searcher = new IndexSearcher(reader)
@@ -265,14 +275,14 @@ class Bot extends Actor with ActorLogging {
     collector.topDocs().scoreDocs.toSeq.map(_.doc).map(searcher.doc(_).get("text")).map(x=>twitter4j.json.DataObjectFactory.createStatus(x))
   }
 
-  def onStatus(status: Status) {
-    
+  def onStatus(status: Status) {  
   }
 
   /** Calculates the sentiment of a given string (a tweet or other document)
     *
     * @param tweet The string to calculate the sentiment of
-    * @return A value between 0.0 and 1.0, which is the positivity of the tweet
+    * @return A tuple, where the three elements are values between 0.0 and 1.0, 
+    *         which are the pos/sad/angry percentages of the tweet
     */
   def sentiment_calc(tweet: String):(Double,Double,Double) = {
     // Add opinions to the static lexicons
@@ -314,9 +324,9 @@ class Bot extends Actor with ActorLogging {
     * @param tweet The string to calculate the sentiment of
     * @param allFlag A flag the makes the function return the total count of 
     *                sentimental words
-    * @return A tuple, where the first element is a value between 0.0 and 1.0, 
-    *         which is the positivity of the tweet, andthe second is the total
-    *         count of all sentiment words in the tweet.
+    * @return A tuple, where the first three elements are values between 0.0 and 1.0, 
+    *         which are the pos/sad/angry percentages of the tweet, and the fourth
+    *         element  is the total count of all sentiment words in the tweet.
     */
   def sentiment_calc(tweet: String, allFlag: Boolean):(Double,Double,Double,Double) = {
     // Add opinions to the static lexicons
@@ -353,6 +363,9 @@ class Bot extends Actor with ActorLogging {
     if (all == 0) return (0.0,0.0,0.0,all) else return (pos,angry,sad,all)
   }
 
+  /** Prints a tweet to the console with sentiment words highlighted (used only for debugging)
+   * @param tweet The tweet to analyze/print.
+   */ 
   def printSentimentColor(tweet: String) {
     val toks = SimpleTokenizer(tweet)
     toks.foreach{word =>
@@ -373,6 +386,10 @@ class Bot extends Actor with ActorLogging {
     println("")
   }
 
+  /** Forms an opinion item for a given word by searching Twitter for the 'average' thoughts
+   *   about that word.
+   * @param opinionItem The word to form an opinion about.
+   */
   def formOpinion(opinionItem: String) {
     log.info("Forming Opinion About: "+opinionItem)
 
@@ -391,9 +408,20 @@ class Bot extends Actor with ActorLogging {
     } 
   }
 
+  /** Sets the mood for a user to a particular value (used only for debugging). Status must include
+   *   the word 'sad','angry', or 'happy'.
+   * @param status The tweet that includes the setMood command, the mood is extracted from here.
+   * @param tweeter The user who we should set this mood for.
+   */
+  def setMood(status: String, tweeter: String) {
+    if (status.contains("sad")) userMood(tweeter) = new Mood(0.0,0.0,1.0)
+    else if (status.contains("angry")) userMood(tweeter) = new Mood(0.0,1.0,0.0)
+    else userMood(tweeter) = new Mood(1.0,0.0,0.0)
+    log.info("Set Mood For "+tweeter+":"+userMood(tweeter))
+  }
+
 }
   
-
 class ReplierManager extends Actor with ActorLogging {
   import Bot._
 
@@ -535,9 +563,16 @@ class LuceneWriter extends Actor with ActorLogging {
   }
 }
 
+/** A class to hold the variables associated with a Mood.
+ * Currently has Positive, Angry, and Sad variables, but can
+ * be extended.
+ *
+ * Includes utility functions to return the current Mood.
+ */
 class Mood(p: Double, a: Double, s: Double) {
   import Bot._
 
+  // Emotion variables...
   var positive = p
   var angry    = a
   var sad      = s
@@ -551,12 +586,8 @@ class Mood(p: Double, a: Double, s: Double) {
       "sad"
     }
 
-  def updateMood(tweet: String) {
-
-  }
-
+  // Pretty Print the current Mood...
   override def toString(): String =  "Pos:"+positive+" Sad:"+sad+" Ang:"+angry 
-  
 }
 
 object TwitterRegex {
