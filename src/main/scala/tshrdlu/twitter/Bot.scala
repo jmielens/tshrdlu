@@ -161,15 +161,16 @@ class Bot extends Actor with ActorLogging {
       if (filteredTweets.length == 0) {
         
         val luceneTweets = read(query.getQuery)
-        val filteredLuceneTweets = filterTweetsByMood(luceneTweets,curMood)
-        val zippedTweets = filteredLuceneTweets.zip(luceneTweets.map(tweet => 
-                                              (tweet,distance_from_austin( (tweet.getGeoLocation.getLatitude,tweet.getGeoLocation.getLongitude) ))))
-        val sortedTweets = zippedTweets.sortBy(_._2).unzip._1
 
-        if (luceneTweets.length == 0)
+        if (luceneTweets.length == 0) {
           sender ! tweets
-        else
+        } else {
+          val filteredLuceneTweets = filterTweetsByMood(luceneTweets,curMood)
+          val zippedTweets = filteredLuceneTweets.zip(luceneTweets.map(tweet => 
+                                                (tweet,distance_from_austin( (tweet.getGeoLocation.getLatitude,tweet.getGeoLocation.getLongitude) ))))
+          val sortedTweets = zippedTweets.sortBy(_._2).unzip._1
           sender ! sortedTweets.take(Math.round(sortedTweets.length.toDouble/2.0).toInt) // Return the closest tweets to Austin
+        }
       } else {
         sender ! filteredTweets
       }
@@ -316,7 +317,7 @@ class Bot extends Actor with ActorLogging {
                     .length 
 
     val all = pos + sad + angry
-    if (all == 0) return (0.0,0.0,0.0) else return (pos,angry,sad)
+    if (all == 0) return (0.0,0.0,0.0) else return (pos/5.0,angry,sad)
   }
 
   /** Calculates the sentiment of a given string (a tweet or other document)
@@ -360,7 +361,7 @@ class Bot extends Actor with ActorLogging {
                     .length 
 
     val all = (pos + sad + angry).toDouble
-    if (all == 0) return (0.0,0.0,0.0,all) else return (pos,angry,sad,all)
+    if (all == 0) return (0.0,0.0,0.0,all) else return (pos/5.0,angry,sad,all)
   }
 
   /** Prints a tweet to the console with sentiment words highlighted (used only for debugging)
